@@ -328,3 +328,9 @@ ASALocalRun/
 
 # MFractors (Xamarin productivity tool) working folder 
 .mfractor/
+
+VulkanTest.xcodeproj/
+
+VulkanTest/.DS_Store
+
+.DS_Store

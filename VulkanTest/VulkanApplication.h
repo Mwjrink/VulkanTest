@@ -4,10 +4,14 @@
 #include <GLFW/glfw3.h>
 
 #include <sys/stat.h>
-#include <filesystem>
 #include <fstream>
 #include <map>
+#ifdef _WIN32
 #include <optional>
+#include <filesystem>
+#elif __APPLE__
+#include <experimental/optional>
+#endif
 #include <stdexcept>
 #include <vector>
 
@@ -41,9 +45,15 @@ void DestroyDebugUtilsMessengerEXT(VkInstance instance, VkDebugUtilsMessengerEXT
 
 struct QueueFamilyIndices
 {
+#ifdef _WIN32
     std::optional<uint32_t> graphicsFamily;
-
-    bool isComplete() { return graphicsFamily.has_value(); }
+    
+        bool isComplete() { return graphicsFamily.has_value(); }
+#elif __APPLE__
+    std::experimental::optional<uint32_t> graphicsFamily;
+    
+        bool isComplete() { return graphicsFamily.operator bool(); }
+#endif
 };
 
 class VulkanApplication
@@ -103,14 +113,19 @@ class VulkanApplication
     {
         std::string fileName = "graphics0.log";
 
+#ifdef _WIN32
         int logNumber = 0;
-        while (std::filesystem::exists(fileName))
+        while (std::filesystem::exists(logPath + "/Graphics/" + fileName))
         {
             fileName = "grapics" + std::to_string(logNumber) + ".log";
             logNumber++;
         }
+#elif __APPLE__
+        logPath = "/Users/maxrink/Development/Vulkan Project/VulkanTest";
+#endif
 
         graphicsLogFile.open(logPath + "/Graphics/" + fileName);
+        graphicsLogFile.clear();
 
         graphicsLog = Logger(&graphicsLogFile);
     }
