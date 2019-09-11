@@ -72,11 +72,10 @@ struct SwapChainSupportDetails
 
 static std::vector<char> readFile(const std::string& filename)
 {
-    /*
-    We start by opening the file with two flags:
-    ate: // Start reading at the end of the file
-    binary: // Read the file as binary file(avoid text transformations)
-    */
+    // We start by opening the file with two flags:
+    // ate:	// Start reading at the end of the file
+    // binary: // Read the file as binary file(avoid text transformations)
+
     // The advantage of starting to read at the end of the file is that we can use the read position to determine the size of
     // the file and allocate a buffer:
     std::ifstream file(filename, std::ios::ate | std::ios::binary);
@@ -110,8 +109,8 @@ class VulkanApplication
     VkSurfaceKHR surface;
 
     GLFWwindow* window;
-    const int   WIDTH  = 800;
-    const int   HEIGHT = 600;
+    int   WIDTH  = 800;
+    int   HEIGHT = 600;
 
     std::ofstream graphicsLogFile;
     Logger        graphicsLog;
@@ -148,8 +147,10 @@ class VulkanApplication
     std::vector<VkFence>     inFlightFences;
     size_t                   currentFrame = 0;
 
-    const std::vector<const char*> validationLayers = {
-        "VK_LAYER_LUNARG_standard_validation"};  // cant seem to find the macro for this
+    bool framebufferResized = false;
+
+    // cant seem to find the macro for this
+    const std::vector<const char*> validationLayers = {"VK_LAYER_LUNARG_standard_validation"};
 
     const std::vector<const char*> deviceExtensions = {VK_KHR_SWAPCHAIN_EXTENSION_NAME};
 
@@ -166,6 +167,7 @@ class VulkanApplication
     {
         std::cerr << "validation layer: " << pCallbackData->pMessage << std::endl;
 
+        // TODO: @MaxProperErrorChecking, uncomment and use this nonsense
         // if (messageSeverity >= VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT)
         //      {
         //          // Message is important enough to show
@@ -220,6 +222,16 @@ class VulkanApplication
 
         // create the window and store a pointer to it
         window = glfwCreateWindow(WIDTH, HEIGHT, "Vulkan", nullptr, nullptr);
+        // TODO @MaxYikes, I mean this is cool but wtf, code: 17894375109
+        glfwSetWindowUserPointer(window, this);
+        glfwSetFramebufferSizeCallback(window, framebufferResizeCallback);
+    }
+
+    static void framebufferResizeCallback(GLFWwindow* window, int width, int height)
+    {
+        // TODO: @MaxYikes, see code: 17894375109
+        auto app                = reinterpret_cast<VulkanApplication*>(glfwGetWindowUserPointer(window));
+        app->framebufferResized = true;
     }
 
     void populateDebugMessengerCreateInfo(VkDebugUtilsMessengerCreateInfoEXT& createInfo)
@@ -266,6 +278,14 @@ class VulkanApplication
 
     void recreateSwapChain()
     {
+		// TODO: @MaxYikes, fix this shit with semaphores or something please
+        int width = 0, height = 0;
+        while (width == 0 || height == 0)
+        {
+            glfwGetFramebufferSize(window, &width, &height);
+            glfwWaitEvents();
+        }
+
         vkDeviceWaitIdle(device);
 
         cleanupSwapChain();
@@ -1388,8 +1408,26 @@ class VulkanApplication
 
         uint32_t imageIndex;
         // TODO: @MaxBestPractice, set the timeout
-        vkAcquireNextImageKHR(device, swapChain, UINT64_MAX, imageAvailableSemaphores[currentFrame], VK_NULL_HANDLE,
-                              &imageIndex);
+        auto result = vkAcquireNextImageKHR(device, swapChain, UINT64_MAX, imageAvailableSemaphores[currentFrame],
+                                            VK_NULL_HANDLE, &imageIndex);
+
+        // VK_SUBOPTIMAL_KHR is technically a success, and we have the image already but its not optimal
+        // TODO: @MaxMaybe, Maybe do something special with VK_SUBOPTIMAL_KHR like drawing all the way then recreating the
+        // SwapChain at the end of/after drawing the frame to completion
+        if (result == VK_ERROR_OUT_OF_DATE_KHR || framebufferResized)
+        {
+            framebufferResized = false;
+            recreateSwapChain();
+            return;
+        }
+        else if (result == VK_SUBOPTIMAL_KHR)
+        {
+            framebufferResized = true;
+        }
+        else if (result != VK_SUCCESS)
+        {
+            throwOnError(result, "failed to acquire swap chain image!");
+        }
 
         VkSubmitInfo submitInfo = {};
         submitInfo.sType        = VK_STRUCTURE_TYPE_SUBMIT_INFO;
@@ -1407,10 +1445,12 @@ class VulkanApplication
         submitInfo.signalSemaphoreCount = 1;
         submitInfo.pSignalSemaphores    = signalSemaphores;
 
+        vkResetFences(device, 1, &inFlightFences[currentFrame]);
+
         // The function takes an array of VkSubmitInfo structures as argument for efficiency when the workload is much
         // larger. The last parameter references an optional fence that will be signaled when the command buffers finish
         // execution.
-        auto result = vkQueueSubmit(graphicsQueue, 1, &submitInfo, inFlightFences[currentFrame]);
+        result = vkQueueSubmit(graphicsQueue, 1, &submitInfo, inFlightFences[currentFrame]);
         throwOnError(result, "failed to submit draw command buffer!");
 
         VkPresentInfoKHR presentInfo = {};
@@ -1430,7 +1470,15 @@ class VulkanApplication
         presentInfo.pResults = nullptr;  // Optional
 
         result = vkQueuePresentKHR(presentQueue, &presentInfo);
-        // throwOnError(result, "");
+        if (result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_SUBOPTIMAL_KHR || framebufferResized)
+        {
+            framebufferResized = false;
+            recreateSwapChain();
+        }
+        else if (result != VK_SUCCESS)
+        {
+            throwOnError(result, "failed to present swap chain image!");
+        }
 
         currentFrame = (currentFrame + 1) % MAX_FRAMES_IN_FLIGHT;
     }
@@ -1558,7 +1606,7 @@ class VulkanApplication
 // The color blending stage applies operations to mix different fragments that map to the same pixel in the framebuffer.
 // Fragments can simply overwrite each other, add up or be mixed based upon transparency.
 //
-//
+// *************************************************************************************************************************
 //
 // The graphics pipeline in Vulkan is almost completely immutable, so you must recreate the pipeline from scratch if you
 // want to change shaders, bind different framebuffers or change the blend function. The disadvantage is that you'll have
@@ -1573,33 +1621,33 @@ class VulkanApplication
 // then you can disable the fragment shader stage, which is useful for shadow map generation.
 // https://en.wikipedia.org/wiki/Shadow_mapping
 //
-//
+// *************************************************************************************************************************
 //
 // Also try running the compiler without any arguments to see what kinds of flags it supports. It can, for example, also
 // output the bytecode into a human-readable format so you can see exactly what your shader is doing and any
 // optimizations that have been applied at this stage.
 //
-//
+// *************************************************************************************************************************
 //
 // The Vulkan SDK includes libshaderc, which is a library to compile GLSL code to SPIR-V from within your program.
 // https://github.com/google/shaderc
 //
-//
+// *************************************************************************************************************************
 //
 // TODO: @MaxUpgradeAPI, Look into custom allocators for all the objects we are creating through vulkan calls
 //
-//
+// *************************************************************************************************************************
 //
 // Fences are mainly designed to synchronize your application itself with rendering operation, whereas semaphores are
 // used to synchronize operations within or across command queues.
 //
-//
+// *************************************************************************************************************************
 //
 // That's all it takes to recreate the swap chain! However, the disadvantage of this approach is that we need to stop all
 // rendering before creating the new swap chain. It is possible to create a new swap chain while drawing commands on an image
 // from the old swap chain are still in-flight. You need to pass the previous swap chain to the oldSwapChain field in the
 // VkSwapchainCreateInfoKHR struct and destroy the old swap chain as soon as you've finished using it.
 //
-//
+// *************************************************************************************************************************
 //
 //
