@@ -2,6 +2,8 @@
 
 #include <iostream>
 
+// Lorian or Spock
+
 int main()
 {
     VulkanApplication app;

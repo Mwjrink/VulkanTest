@@ -6,6 +6,7 @@
 #define CHECK "Y"
 #define CROSS "X"
 
+// TODO: @MaxPlatformSpecific, find a way to timestamp in each os, add a function: Log(Error_Level(ENUM) e, message); and LogWithoutLineStampTimeStamp(message);
 class Logger
 {
     std::ostream* stream;

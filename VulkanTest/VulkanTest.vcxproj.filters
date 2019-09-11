@@ -13,6 +13,21 @@
       <UniqueIdentifier>{67DA6AB6-F800-4c08-8B7A-83BB121AAD01}</UniqueIdentifier>
       <Extensions>rc;ico;cur;bmp;dlg;rc2;rct;bin;rgs;gif;jpg;jpeg;jpe;resx;tiff;tif;png;wav;mfcribbon-ms</Extensions>
     </Filter>
+    <Filter Include="Shaders">
+      <UniqueIdentifier>{5d2d06f6-c554-4144-a466-ef8eb1b25547}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Shaders\Vertex">
+      <UniqueIdentifier>{abff9d4d-d833-4239-be37-1fe1137f532a}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Shaders\Tessellation">
+      <UniqueIdentifier>{efa97b85-10ef-4962-9009-4f554f555db8}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Shaders\Geometry">
+      <UniqueIdentifier>{40601bfa-b9a1-44af-b673-3ecf396b43fd}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Shaders\Fragment">
+      <UniqueIdentifier>{2f90123d-8332-40b1-8f42-529ba028838b}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="VulkanApplication.h">
@@ -26,5 +41,16 @@
     <ClCompile Include="Main.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="compile.bat">
+      <Filter>Shaders</Filter>
+    </None>
+    <None Include="unorthodoxTriangle.frag">
+      <Filter>Shaders\Fragment</Filter>
+    </None>
+    <None Include="unorthodoxTriangle.vert">
+      <Filter>Shaders\Vertex</Filter>
+    </None>
   </ItemGroup>
 </Project>
