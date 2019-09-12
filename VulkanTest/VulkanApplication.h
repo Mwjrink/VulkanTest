@@ -8,6 +8,8 @@
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 
+#include <stb_image.h>
+
 #include <algorithm>
 #include <array>
 #include <cstdint>  // Necessary for UINT32_MAX
@@ -371,6 +373,7 @@ class VulkanApplication
         createGraphicsPipeline();
         createFramebuffers();
         createCommandPool();
+        createTextureImage();
         createVertexBuffer();
         createIndexBuffer();
         createUniformBuffers();
@@ -378,6 +381,18 @@ class VulkanApplication
         createDescriptorSets();
         createCommandBuffers();
         createSyncObjects();
+    }
+
+	void createTextureImage() {
+        int          texWidth, texHeight, texChannels;
+        stbi_uc*     pixels    = stbi_load("textures/texture.jpg", &texWidth, &texHeight, &texChannels, STBI_rgb_alpha);
+        VkDeviceSize imageSize = texWidth * texHeight * 4;
+
+        if (!pixels)
+        {
+            Log();
+            throw std::runtime_error("failed to load texture image!");
+        }
     }
 
     void createDescriptorSets()
@@ -2175,6 +2190,17 @@ class VulkanApplication
 // The only thing that needs to be changed is the Z coordinate of the camera because in left handed systems the positive Z
 // moves away from the viewer. So: glm::lookAt(glm::vec3(0.0f, 2.0f, -2.0f), glm::vec3(0.0f, 0.0f, 0.0f),
 // glm::vec3(0.0f, 1.0f, 0.0f));
+//
+// *************************************************************************************************************************
+//
+// When performing any operation on images, you must make sure that they have the layout that is optimal for use in that
+// operation. We've actually already seen some of these layouts when we specified the render pass:
+//
+// VK_IMAGE_LAYOUT_PRESENT_SRC_KHR: Optimal for presentation
+// VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL: Optimal as attachment for writing colors from the fragment shader
+// VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL: Optimal as source in a transfer operation, like vkCmdCopyImageToBuffer
+// VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL: Optimal as destination in a transfer operation, like vkCmdCopyBufferToImage
+// VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL: Optimal for sampling from a shader
 //
 // *************************************************************************************************************************
 //
