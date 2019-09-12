@@ -1,24 +1,30 @@
 #pragma once
 
 #define GLFW_INCLUDE_VULKAN
+//#define GLM_FORCE_DEFAULT_ALIGNED_GENTYPES
 #include <GLFW/glfw3.h>
 
+#define GLM_FORCE_RADIANS
+#include <glm/glm.hpp>
+#include <glm/gtc/matrix_transform.hpp>
+
+#include <algorithm>
+#include <array>
+#include <cstdint>  // Necessary for UINT32_MAX
+#include <fstream>
 #include <map>
+#include <set>
+#include <stdexcept>
+#include <vector>
+
+#include <iostream>
+
 #ifdef _WIN32
 #include <filesystem>
 #include <optional>
 #elif __APPLE__
 #include <experimental/optional>
 #endif
-#include <algorithm>
-#include <array>
-#include <cstdint>  // Necessary for UINT32_MAX
-#include <fstream>
-#include <set>
-#include <stdexcept>
-#include <vector>
-
-#include <iostream>
 
 #include "logger.h"
 
@@ -48,6 +54,54 @@ void DestroyDebugUtilsMessengerEXT(VkInstance instance, VkDebugUtilsMessengerEXT
     }
 }
 
+struct Vertex
+{
+    glm::vec2 pos;
+    glm::vec3 color;
+
+    static VkVertexInputBindingDescription getBindingDescription()
+    {
+        VkVertexInputBindingDescription bindingDescription = {};
+        bindingDescription.binding                         = 0;
+        bindingDescription.stride                          = sizeof(Vertex);
+        bindingDescription.inputRate                       = VK_VERTEX_INPUT_RATE_VERTEX;
+
+        // inputRate parameter can have one of the following values:
+        // VK_VERTEX_INPUT_RATE_VERTEX:   // Move to the next data entry after each vertex
+        // VK_VERTEX_INPUT_RATE_INSTANCE: // Move to the next data entry after each instance
+
+        return bindingDescription;
+    }
+
+    static std::array<VkVertexInputAttributeDescription, 2> getAttributeDescriptions()
+    {
+        std::array<VkVertexInputAttributeDescription, 2> attributeDescriptions = {};
+
+        attributeDescriptions[0].binding  = 0;
+        attributeDescriptions[0].location = 0;
+        attributeDescriptions[0].format   = VK_FORMAT_R32G32_SFLOAT;
+        attributeDescriptions[0].offset   = offsetof(Vertex, pos);
+
+        // The format parameter describes the type of data for the attribute. A bit confusingly, the formats are specified
+        // using the same enumeration as color formats. The following shader types and formats are commonly used together:
+        // float: VK_FORMAT_R32_SFLOAT
+        // vec2: VK_FORMAT_R32G32_SFLOAT
+        // vec3: VK_FORMAT_R32G32B32_SFLOAT
+        // vec4: VK_FORMAT_R32G32B32A32_SFLOAT
+
+        // ivec2: VK_FORMAT_R32G32_SINT, a 2-component vector of 32-bit signed integers
+        // uvec4: VK_FORMAT_R32G32B32A32_UINT, a 4-component vector of 32-bit unsigned integers
+        // double: VK_FORMAT_R64_SFLOAT, a double-precision (64-bit) float
+
+        attributeDescriptions[1].binding  = 0;
+        attributeDescriptions[1].location = 1;
+        attributeDescriptions[1].format   = VK_FORMAT_R32G32B32_SFLOAT;
+        attributeDescriptions[1].offset   = offsetof(Vertex, color);
+
+        return attributeDescriptions;
+    }
+};
+
 struct QueueFamilyIndices
 {
 #ifdef _WIN32
@@ -68,6 +122,20 @@ struct SwapChainSupportDetails
     VkSurfaceCapabilitiesKHR        capabilities;
     std::vector<VkSurfaceFormatKHR> formats;
     std::vector<VkPresentModeKHR>   presentModes;
+};
+
+// Vulkan expects this to be aligned a certain way (see footnote)
+// Scalars have to be aligned by N (= 4 bytes given 32 bit floats).
+// A vec2 must be aligned by 2N (= 8 bytes)
+// A vec3 or vec4 must be aligned by 4N (= 16 bytes)
+// A nested structure must be aligned by the base alignment of its members rounded up to a multiple of 16.
+// A mat4 matrix must have the same alignment as a vec4.
+struct UniformBufferObject
+{
+    // being explicit about the alignment, though this is not necessarily necessary
+    alignas(16) glm::mat4 model;
+    alignas(16) glm::mat4 view;
+    alignas(16) glm::mat4 proj;
 };
 
 static std::vector<char> readFile(const std::string& filename)
@@ -109,8 +177,13 @@ class VulkanApplication
     VkSurfaceKHR surface;
 
     GLFWwindow* window;
-    int   WIDTH  = 800;
-    int   HEIGHT = 600;
+
+    // TODO: @MaxCompleteAPI, these should not be constants
+    // TODO: @MaxCompleteAPI, make a simple configurations class that stores configs in a .ini or some such file (maybe allow
+    //			it to be encrypted) and you can update those values and read them so they persist accross runs (for settings
+    //			and stuff)
+    int WIDTH  = 800;
+    int HEIGHT = 600;
 
     std::ofstream graphicsLogFile;
     Logger        graphicsLog;
@@ -131,8 +204,9 @@ class VulkanApplication
 
     std::vector<VkImageView> swapChainImageViews;
 
-    VkRenderPass     renderPass;
-    VkPipelineLayout pipelineLayout;
+    VkRenderPass          renderPass;
+    VkDescriptorSetLayout descriptorSetLayout;
+    VkPipelineLayout      pipelineLayout;
 
     VkPipeline graphicsPipeline;
 
@@ -147,10 +221,33 @@ class VulkanApplication
     std::vector<VkFence>     inFlightFences;
     size_t                   currentFrame = 0;
 
+    VkBuffer       vertexBuffer;
+    VkDeviceMemory vertexBufferMemory;
+    VkBuffer       indexBuffer;
+    VkDeviceMemory indexBufferMemory;
+
+    // We need multiple because we need one per in-flight frame (model/projection etc could (vast majority of cases) be
+    // different every frame
+    std::vector<VkBuffer>       uniformBuffers;
+    std::vector<VkDeviceMemory> uniformBuffersMemory;
+
+    VkDescriptorPool             descriptorPool;
+    std::vector<VkDescriptorSet> descriptorSets;
+
+    const std::vector<Vertex> vertices = {{{-0.5f, -0.5f}, {1.0f, 0.0f, 0.0f}},  //
+                                          {{0.5f, -0.5f}, {0.0f, 1.0f, 0.0f}},   //
+                                          {{0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}},    //
+                                          {{-0.5f, 0.5f}, {1.0f, 1.0f, 1.0f}}};
+
+    // It is possible to use either uint16_t or uint32_t for your index buffer depending on the number of entries in
+    // vertices. We can stick to uint16_t for now because we're using less than 65535 unique vertices.
+    const std::vector<uint16_t> indices = {0, 1, 2, 2, 3, 0};
+
     bool framebufferResized = false;
 
     // cant seem to find the macro for this
-    const std::vector<const char*> validationLayers = {"VK_LAYER_LUNARG_standard_validation"};
+    const std::vector<const char*> validationLayers = {"VK_LAYER_KHRONOS_validation", "VK_LAYER_LUNARG_monitor",
+                                                       "VK_LAYER_LUNARG_assistant_layer"};
 
     const std::vector<const char*> deviceExtensions = {VK_KHR_SWAPCHAIN_EXTENSION_NAME};
 
@@ -160,33 +257,7 @@ class VulkanApplication
     const bool enableValidationLayers = true;
 #endif
 
-    static VKAPI_ATTR VkBool32 VKAPI_CALL debugCallback(VkDebugUtilsMessageSeverityFlagBitsEXT      messageSeverity,
-                                                        VkDebugUtilsMessageTypeFlagsEXT             messageType,
-                                                        const VkDebugUtilsMessengerCallbackDataEXT* pCallbackData,
-                                                        void*                                       pUserData)
-    {
-        std::cerr << "validation layer: " << pCallbackData->pMessage << std::endl;
-
-        // TODO: @MaxProperErrorChecking, uncomment and use this nonsense
-        // if (messageSeverity >= VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT)
-        //      {
-        //          // Message is important enough to show
-        // VK_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT // Diagnostic message
-        // VK_DEBUG_UTILS_MESSAGE_SEVERITY_INFO_BIT_EXT	   // Informational message like the creation of a resource
-        // VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT // Message about behavior that is not necessarily an error,
-        //												   // but very likely a bug in your application
-        // VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT   // Message about behavior that is invalid and may cause crashes
-        //      }
-
-        // VK_DEBUG_UTILS_MESSAGE_TYPE_GENERAL_BIT_EXT     // Some event has happened that is unrelated to the specification
-        //												   // or performance
-        // VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT  // Something has happened that violates the specification or
-        //												   // indicates a possible mistake
-        // VK_DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT // Potential non-optimal use of Vulkan
-
-        return VK_FALSE;
-    }
-
+    // TODO: @MaxCompleteAPI, pass in a Logger instead of creating it here
     void initLog(std::string logPath)
     {
         std::string fileName = "graphics0.log";
@@ -197,7 +268,7 @@ class VulkanApplication
         int logNumber = 0;
         while (std::filesystem::exists(logPath + "/Graphics/" + fileName))
         {
-            fileName = "grapics" + std::to_string(logNumber) + ".log";
+            fileName = "graphics" + std::to_string(logNumber) + ".log";
             logNumber++;
         }
 #elif __APPLE__
@@ -232,6 +303,33 @@ class VulkanApplication
         // TODO: @MaxYikes, see code: 17894375109
         auto app                = reinterpret_cast<VulkanApplication*>(glfwGetWindowUserPointer(window));
         app->framebufferResized = true;
+    }
+
+    static VKAPI_ATTR VkBool32 VKAPI_CALL debugCallback(VkDebugUtilsMessageSeverityFlagBitsEXT      messageSeverity,
+                                                        VkDebugUtilsMessageTypeFlagsEXT             messageType,
+                                                        const VkDebugUtilsMessengerCallbackDataEXT* pCallbackData,
+                                                        void*                                       pUserData)
+    {
+        std::cerr << "validation layer: " << pCallbackData->pMessage << std::endl;
+
+        // TODO: @MaxProperErrorChecking, uncomment and use this nonsense
+        // if (messageSeverity >= VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT)
+        //      {
+        //          // Message is important enough to show
+        // VK_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT // Diagnostic message
+        // VK_DEBUG_UTILS_MESSAGE_SEVERITY_INFO_BIT_EXT	   // Informational message like the creation of a resource
+        // VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT // Message about behavior that is not necessarily an error,
+        //												   // but very likely a bug in your application
+        // VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT   // Message about behavior that is invalid and may cause crashes
+        //      }
+
+        // VK_DEBUG_UTILS_MESSAGE_TYPE_GENERAL_BIT_EXT     // Some event has happened that is unrelated to the specification
+        //												   // or performance
+        // VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT  // Something has happened that violates the specification or
+        //												   // indicates a possible mistake
+        // VK_DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT // Potential non-optimal use of Vulkan
+
+        return VK_FALSE;
     }
 
     void populateDebugMessengerCreateInfo(VkDebugUtilsMessengerCreateInfoEXT& createInfo)
@@ -269,16 +367,308 @@ class VulkanApplication
         createSwapChain();
         createImageViews();
         createRenderPass();
+        createDescriptorSetLayout();
         createGraphicsPipeline();
         createFramebuffers();
         createCommandPool();
+        createVertexBuffer();
+        createIndexBuffer();
+        createUniformBuffers();
+        createDescriptorPool();
+        createDescriptorSets();
         createCommandBuffers();
         createSyncObjects();
     }
 
+    void createDescriptorSets()
+    {
+        std::vector<VkDescriptorSetLayout> layouts(swapChainImages.size(), descriptorSetLayout);
+        VkDescriptorSetAllocateInfo        allocInfo = {};
+        allocInfo.sType                              = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+        allocInfo.descriptorPool                     = descriptorPool;
+        allocInfo.descriptorSetCount                 = static_cast<uint32_t>(swapChainImages.size());
+        allocInfo.pSetLayouts                        = layouts.data();
+
+        descriptorSets.resize(swapChainImages.size());
+
+        auto result = vkAllocateDescriptorSets(device, &allocInfo, descriptorSets.data());
+        throwOnError(result, "failed to allocate descriptor sets!");
+
+        for (size_t i = 0; i < swapChainImages.size(); i++)
+        {
+            VkDescriptorBufferInfo bufferInfo = {};
+            bufferInfo.buffer                 = uniformBuffers[i];
+            bufferInfo.offset                 = 0;
+            bufferInfo.range                  = sizeof(UniformBufferObject);  // VK_WHOLE_SIZE
+
+            VkWriteDescriptorSet descriptorWrite = {};
+            descriptorWrite.sType                = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            descriptorWrite.dstSet               = descriptorSets[i];
+            descriptorWrite.dstBinding           = 0;
+            descriptorWrite.dstArrayElement      = 0;
+
+            descriptorWrite.descriptorType  = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+            descriptorWrite.descriptorCount = 1;
+
+            descriptorWrite.pBufferInfo      = &bufferInfo;
+            descriptorWrite.pImageInfo       = nullptr;  // Optional
+            descriptorWrite.pTexelBufferView = nullptr;  // Optional
+
+            vkUpdateDescriptorSets(device, 1, &descriptorWrite, 0, nullptr);
+        }
+    }
+
+    void createDescriptorPool()
+    {
+        VkDescriptorPoolSize poolSize = {};
+        poolSize.type                 = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+        poolSize.descriptorCount      = static_cast<uint32_t>(swapChainImages.size());
+
+        VkDescriptorPoolCreateInfo poolInfo = {};
+        poolInfo.sType                      = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+        poolInfo.poolSizeCount              = 1;
+        poolInfo.pPoolSizes                 = &poolSize;
+
+        poolInfo.maxSets = static_cast<uint32_t>(swapChainImages.size());
+
+        // The structure has an optional flag similar to command pools that determines if individual descriptor sets can be
+        // freed or not: VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT. We're not going to touch the descriptor set after
+        // creating it, so we don't need this flag. You can leave flags to its default value of 0.
+
+        auto result = vkCreateDescriptorPool(device, &poolInfo, nullptr, &descriptorPool);
+        throwOnError(result, "failed to create descriptor pool!");
+    }
+
+    void createUniformBuffers()
+    {
+        VkDeviceSize bufferSize = sizeof(UniformBufferObject);
+
+        uniformBuffers.resize(swapChainImages.size());
+        uniformBuffersMemory.resize(swapChainImages.size());
+
+        for (size_t i = 0; i < swapChainImages.size(); i++)
+        {
+            createBuffer(bufferSize, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+                         VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, uniformBuffers[i],
+                         uniformBuffersMemory[i]);
+        }
+    }
+
+    void createDescriptorSetLayout()
+    {
+        VkDescriptorSetLayoutBinding uboLayoutBinding = {};
+        uboLayoutBinding.binding                      = 0;
+        uboLayoutBinding.descriptorType               = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+        uboLayoutBinding.descriptorCount              = 1;
+
+        // VK_SHADER_STAGE_ALL_GRAPHICS (all of the below)
+        // VK_SHADER_STAGE_VERTEX_BIT,
+        // VK_SHADER_STAGE_TESSELLATION_CONTROL_BIT,
+        // VK_SHADER_STAGE_TESSELLATION_EVALUATION_BIT,
+        // VK_SHADER_STAGE_GEOMETRY_BIT,
+        // VK_SHADER_STAGE_FRAGMENT_BIT,
+        // VK_SHADER_STAGE_COMPUTE_BIT,
+        // VK_SHADER_STAGE_ALL_GRAPHICS,
+        // VK_SHADER_STAGE_ALL,
+        // VK_SHADER_STAGE_RAYGEN_BIT_NV,
+        // VK_SHADER_STAGE_ANY_HIT_BIT_NV,
+        // VK_SHADER_STAGE_CLOSEST_HIT_BIT_NV,
+        // VK_SHADER_STAGE_MISS_BIT_NV,
+        // VK_SHADER_STAGE_INTERSECTION_BIT_NV,
+        // VK_SHADER_STAGE_CALLABLE_BIT_NV,
+        // VK_SHADER_STAGE_TASK_BIT_NV,
+        // VK_SHADER_STAGE_MESH_BIT_NV,
+        // VK_SHADER_STAGE_FLAG_BITS_MAX_ENUM
+        uboLayoutBinding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+
+        // pImmutableSamplers field is only relevant for image sampling related descriptors
+        uboLayoutBinding.pImmutableSamplers = nullptr;  // Optional
+
+        VkDescriptorSetLayoutCreateInfo layoutInfo = {};
+        layoutInfo.sType                           = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+        layoutInfo.bindingCount                    = 1;
+        layoutInfo.pBindings                       = &uboLayoutBinding;
+
+        auto result = vkCreateDescriptorSetLayout(device, &layoutInfo, nullptr, &descriptorSetLayout);
+        throwOnError(result, "failed to create descriptor set layout!");
+    }
+
+    void createIndexBuffer()
+    {
+        VkDeviceSize bufferSize = sizeof(indices[0]) * indices.size();
+
+        VkBuffer       stagingBuffer;
+        VkDeviceMemory stagingBufferMemory;
+        createBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+                     VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, stagingBuffer,
+                     stagingBufferMemory);
+
+        void* data;
+        vkMapMemory(device, stagingBufferMemory, 0, bufferSize, 0, &data);
+        memcpy(data, indices.data(), (size_t)bufferSize);
+        vkUnmapMemory(device, stagingBufferMemory);
+
+        createBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
+                     VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, indexBuffer, indexBufferMemory);
+
+        copyBuffer(stagingBuffer, indexBuffer, bufferSize);
+
+        vkDestroyBuffer(device, stagingBuffer, nullptr);
+        vkFreeMemory(device, stagingBufferMemory, nullptr);
+    }
+
+    void createVertexBuffer()
+    {
+        VkDeviceSize bufferSize = sizeof(vertices[0]) * vertices.size();
+
+        VkBuffer       stagingBuffer;
+        VkDeviceMemory stagingBufferMemory;
+        createBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+                     VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, stagingBuffer,
+                     stagingBufferMemory);
+
+        void* data;
+        vkMapMemory(device, stagingBufferMemory, 0, bufferSize, 0, &data);
+        memcpy(data, vertices.data(), (size_t)bufferSize);
+        vkUnmapMemory(device, stagingBufferMemory);
+
+        createBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+                     VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, vertexBuffer, vertexBufferMemory);
+
+        copyBuffer(stagingBuffer, vertexBuffer, bufferSize);
+
+        vkDestroyBuffer(device, stagingBuffer, nullptr);
+        vkFreeMemory(device, stagingBufferMemory, nullptr);
+
+        // You can now simply memcpy the vertex data to the mapped memory and unmap it again using vkUnmapMemory.
+        // Unfortunately the driver may not immediately copy the data into the buffer memory, for example because of caching.
+        // It is also possible that writes to the buffer are not visible in the mapped memory yet. There are two ways to deal
+        // with that problem:
+        //
+        // Use a memory heap that is host coherent, indicated with VK_MEMORY_PROPERTY_HOST_COHERENT_BIT
+        //
+        // Call vkFlushMappedMemoryRanges to after writing to the mapped memory, and call vkInvalidateMappedMemoryRanges
+        // before reading from the mapped memory
+
+        // The transfer of data to the GPU is an operation that happens in the background and the specification simply tells
+        // us that it is guaranteed to be complete as of the next call to vkQueueSubmit.
+    }
+
+    // TODO: @MaxCompleteAPI, maybe rename this to buffercpy, also reorder params to (dst, src, size) (same as memcpy)
+    void copyBuffer(VkBuffer srcBuffer, VkBuffer dstBuffer, VkDeviceSize size)
+    {
+        // TODO: @MaxCompleteAPI;
+        // Memory transfer operations are executed using command buffers, just like drawing commands. Therefore we must first
+        // allocate a temporary command buffer. You may wish to create a separate command pool for these kinds of short-lived
+        // buffers, because the implementation may be able to apply memory allocation optimizations. You should use the
+        // VK_COMMAND_POOL_CREATE_TRANSIENT_BIT flag during command pool generation in that case.
+
+        VkCommandBufferAllocateInfo allocInfo = {};
+        allocInfo.sType                       = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+        allocInfo.level                       = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+        allocInfo.commandPool                 = commandPool;
+        allocInfo.commandBufferCount          = 1;
+
+        VkCommandBuffer commandBuffer;
+        vkAllocateCommandBuffers(device, &allocInfo, &commandBuffer);
+
+        VkCommandBufferBeginInfo beginInfo = {};
+        beginInfo.sType                    = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+        beginInfo.flags                    = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+
+        // Assumption, everything between the begin and end lines is auto submitted to this commandBuffer
+        vkBeginCommandBuffer(commandBuffer, &beginInfo);
+
+        VkBufferCopy copyRegion = {};
+        copyRegion.srcOffset    = 0;  // Optional
+        copyRegion.dstOffset    = 0;  // Optional
+        copyRegion.size         = size;
+
+        vkCmdCopyBuffer(commandBuffer, srcBuffer, dstBuffer, 1, &copyRegion);
+
+        vkEndCommandBuffer(commandBuffer);
+
+        VkSubmitInfo submitInfo       = {};
+        submitInfo.sType              = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+        submitInfo.commandBufferCount = 1;
+        submitInfo.pCommandBuffers    = &commandBuffer;
+
+        vkQueueSubmit(graphicsQueue, 1, &submitInfo, VK_NULL_HANDLE);
+
+        // TODO: @MaxCompleteAPI, make this asynchronous (dont use this call)
+        vkQueueWaitIdle(graphicsQueue);
+
+        // TODO: @MaxCompleteAPI;
+        // There are again two possible ways to wait on this transfer to complete. We could use a fence and wait with
+        // vkWaitForFences, or simply wait for the transfer queue to become idle with vkQueueWaitIdle. A fence would allow
+        // you to schedule multiple transfers simultaneously and wait for all of them complete, instead of executing one at a
+        // time. That may give the driver more opportunities to optimize.
+
+        vkFreeCommandBuffers(device, commandPool, 1, &commandBuffer);
+    }
+
+    void createBuffer(VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags properties, VkBuffer& buffer,
+                      VkDeviceMemory& bufferMemory)
+    {
+        VkBufferCreateInfo bufferInfo = {};
+        bufferInfo.sType              = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+        bufferInfo.size               = size;
+
+        // The second field is usage, which indicates for which purposes the data in the buffer is going to be used. It is
+        // possible to specify multiple purposes using a bitwise or.
+        bufferInfo.usage = usage;
+
+        // Just like the images in the swap chain, buffers can also be owned by a specific queue family or be shared between
+        // multiple at the same time. The buffer will only be used from the graphics queue, so we can stick to exclusive
+        // access.
+        bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+
+        if (vkCreateBuffer(device, &bufferInfo, nullptr, &buffer) != VK_SUCCESS)
+        {
+            throw std::runtime_error("failed to create buffer!");
+        }
+
+        VkMemoryRequirements memRequirements;
+        vkGetBufferMemoryRequirements(device, buffer, &memRequirements);
+
+        VkMemoryAllocateInfo allocInfo = {};
+        allocInfo.sType                = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+        allocInfo.allocationSize       = memRequirements.size;
+        allocInfo.memoryTypeIndex      = findMemoryType(memRequirements.memoryTypeBits, properties);
+
+        if (vkAllocateMemory(device, &allocInfo, nullptr, &bufferMemory) != VK_SUCCESS)
+        {
+            throw std::runtime_error("failed to allocate buffer memory!");
+        }
+
+        // fourth parameter is the offset within the region of memory. Since this memory is allocated specifically for this
+        // the vertex buffer, the offset is simply 0. If the offset is non-zero, then it is required to be divisible by
+        // memRequirements.alignment.
+        vkBindBufferMemory(device, buffer, bufferMemory, 0);
+    }
+
+    uint32_t findMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties)
+    {
+        VkPhysicalDeviceMemoryProperties memProperties;
+        vkGetPhysicalDeviceMemoryProperties(physicalDevice, &memProperties);
+
+        // The VkPhysicalDeviceMemoryProperties structure has two arrays memoryTypes and memoryHeaps. Memory heaps are
+        // distinct memory resources like dedicated VRAM and swap space in RAM for when VRAM runs out. The different types of
+        // memory exist within these heaps.
+        for (uint32_t i = 0; i < memProperties.memoryTypeCount; i++)
+        {
+            if ((typeFilter & (1 << i)) && (memProperties.memoryTypes[i].propertyFlags & properties) == properties)
+            {
+                return i;
+            }
+        }
+
+        throw std::runtime_error("failed to find suitable memory type!");
+    }
+
     void recreateSwapChain()
     {
-		// TODO: @MaxYikes, fix this shit with semaphores or something please
+        // TODO: @MaxYikes, fix this shit with semaphores or something please
         int width = 0, height = 0;
         while (width == 0 || height == 0)
         {
@@ -295,6 +685,8 @@ class VulkanApplication
         createRenderPass();
         createGraphicsPipeline();
         createFramebuffers();
+        createUniformBuffers();
+        createDescriptorPool();
         createCommandBuffers();
     }
 
@@ -385,13 +777,20 @@ class VulkanApplication
 
             vkCmdBindPipeline(commandBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, graphicsPipeline);
 
-            // The actual vkCmdDraw function is a bit anticlimactic, but it's so simple because of all the information we
-            // specified in advance. It has the following parameters, aside from the command buffer:
-            // vertexCount: Even though we don't have a vertex buffer, we technically still have 3 vertices to draw.
-            // instanceCount: Used for instanced rendering, use 1 if you're not doing that.
-            // firstVertex: Used as an offset into the vertex buffer, defines the lowest value of gl_VertexIndex.
-            // firstInstance: Used as an offset for instanced rendering, defines the lowest value of gl_InstanceIndex.
-            vkCmdDraw(commandBuffers[i], 3, 1, 0, 0);
+            VkBuffer     vertexBuffers[] = {vertexBuffer};
+            VkDeviceSize offsets[]       = {0};
+            vkCmdBindVertexBuffers(commandBuffers[i], 0, 1, vertexBuffers, offsets);
+
+            // you can only have a single index buffer. It's unfortunately not possible to use different indices for each
+            // vertex attribute, so we do still have to completely duplicate vertex data even if just one attribute varies.
+            vkCmdBindIndexBuffer(commandBuffers[i], indexBuffer, 0, VK_INDEX_TYPE_UINT16);
+
+            vkCmdBindDescriptorSets(commandBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 0, 1,
+                                    &descriptorSets[i], 0, nullptr);
+
+            // OLD call before we indexed vertices
+            // vkCmdDraw(commandBuffers[i], static_cast<uint32_t>(vertices.size()), 1, 0, 0);
+            vkCmdDrawIndexed(commandBuffers[i], static_cast<uint32_t>(indices.size()), 1, 0, 0, 0);
 
             vkCmdEndRenderPass(commandBuffers[i]);
 
@@ -564,19 +963,21 @@ class VulkanApplication
 
         std::array<VkPipelineShaderStageCreateInfo, 2> shaderStages = {vertShaderStageInfo, fragShaderStageInfo};
 
-        /*
-        Bindings: // spacing between data and whether the data is per-vertex or per-instance
-                  // https://en.wikipedia.org/wiki/Geometry_instancing
-        Attribute descriptions: // type of the attributes passed to the vertex shader,which binding to load them from and
-        at
-                                // which offset
-        */
+        // TODO: @MaxCompleteAPI, hardcoding the Vertex data as the accepted for this pipeline, make this accept any object
+        // and be dynamic (TEMPLATES?!?!?! WOOOOHOO)
+        auto bindingDescription    = Vertex::getBindingDescription();
+        auto attributeDescriptions = Vertex::getAttributeDescriptions();
+
+        // Bindings: // spacing between data and whether the data is per-vertex or per-instance
+        //           // https://en.wikipedia.org/wiki/Geometry_instancing
+        // Attribute descriptions: // type of the attributes passed to the vertex shader,which binding to load them from and
+        //                         // at which offset
         VkPipelineVertexInputStateCreateInfo vertexInputInfo = {};
         vertexInputInfo.sType                                = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
-        vertexInputInfo.vertexBindingDescriptionCount        = 0;
-        vertexInputInfo.pVertexBindingDescriptions           = nullptr;  // Optional
-        vertexInputInfo.vertexAttributeDescriptionCount      = 0;
-        vertexInputInfo.pVertexAttributeDescriptions         = nullptr;  // Optional
+        vertexInputInfo.vertexBindingDescriptionCount        = 1;
+        vertexInputInfo.vertexAttributeDescriptionCount      = static_cast<uint32_t>(attributeDescriptions.size());
+        vertexInputInfo.pVertexBindingDescriptions           = &bindingDescription;
+        vertexInputInfo.pVertexAttributeDescriptions         = attributeDescriptions.data();
 
         // The VkPipelineInputAssemblyStateCreateInfo struct describes two things: what kind of geometry will be drawn
         // from the vertices and if primitive restart should be enabled. The former is specified in the topology member
@@ -664,7 +1065,9 @@ class VulkanApplication
 
         // The frontFace variable specifies the vertex order for faces to be considered front-facing and can be clockwise
         // or counterclockwise.
-        rasterizer.frontFace = VK_FRONT_FACE_CLOCKWISE;
+        // This is counterclockwise because we need to flip everything because of GLM being based on OpenGL and they have the
+        // y axis flipped
+        rasterizer.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
 
         // The rasterizer can alter the depth values by adding a constant value or biasing them based on a fragment's
         // slope. This is sometimes used for shadow mapping.
@@ -740,8 +1143,8 @@ class VulkanApplication
         // The structure also specifies push constants, which are another way of passing dynamic values to shaders
         VkPipelineLayoutCreateInfo pipelineLayoutInfo = {};
         pipelineLayoutInfo.sType                      = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-        pipelineLayoutInfo.setLayoutCount             = 0;        // Optional
-        pipelineLayoutInfo.pSetLayouts                = nullptr;  // Optional
+        pipelineLayoutInfo.setLayoutCount             = 1;
+        pipelineLayoutInfo.pSetLayouts                = &descriptorSetLayout;
         pipelineLayoutInfo.pushConstantRangeCount     = 0;        // Optional
         pipelineLayoutInfo.pPushConstantRanges        = nullptr;  // Optional
 
@@ -1429,6 +1832,8 @@ class VulkanApplication
             throwOnError(result, "failed to acquire swap chain image!");
         }
 
+        updateUniformBuffer(imageIndex);
+
         VkSubmitInfo submitInfo = {};
         submitInfo.sType        = VK_STRUCTURE_TYPE_SUBMIT_INFO;
 
@@ -1483,6 +1888,33 @@ class VulkanApplication
         currentFrame = (currentFrame + 1) % MAX_FRAMES_IN_FLIGHT;
     }
 
+    // TODO: @MaxCompleteAPI, Using a UBO this way is not the most efficient way to pass frequently changing values to the
+    // shader. A more efficient way to pass a small buffer of data to shaders are push constants.
+    void updateUniformBuffer(uint32_t currentImage)
+    {
+        static auto startTime = glfwGetTime();
+
+        auto  currentTime = glfwGetTime();
+        float time        = (currentTime - startTime);
+
+        UniformBufferObject ubo = {};
+        ubo.model               = glm::rotate(glm::mat4(1.0f), time * glm::radians(90.0f), glm::vec3(0.0f, 0.0f, 1.0f));
+
+        ubo.view = glm::lookAt(glm::vec3(2.0f, 2.0f, 2.0f), glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 0.0f, 1.0f));
+
+        ubo.proj = glm::perspective(glm::radians(45.0f), swapChainExtent.width / (float)swapChainExtent.height, 0.1f, 10.0f);
+
+        // GLM was originally designed for OpenGL, where the Y coordinate of the clip coordinates is inverted. The easiest
+        // way to compensate for that is to flip the sign on the scaling factor of the Y axis in the projection matrix. If
+        // you don't do this, then the image will be rendered upside down.
+        ubo.proj[1][1] *= -1;
+
+        void* data;
+        vkMapMemory(device, uniformBuffersMemory[currentImage], 0, sizeof(ubo), 0, &data);
+        memcpy(data, &ubo, sizeof(ubo));
+        vkUnmapMemory(device, uniformBuffersMemory[currentImage]);
+    }
+
     void cleanupSwapChain()
     {
         for (size_t i = 0; i < swapChainFramebuffers.size(); i++)
@@ -1496,16 +1928,34 @@ class VulkanApplication
         vkDestroyPipelineLayout(device, pipelineLayout, nullptr);
         vkDestroyRenderPass(device, renderPass, nullptr);
 
-        for (size_t i = 0; i < swapChainImageViews.size(); i++)
+        for (auto imageView : swapChainImageViews)
         {
-            vkDestroyImageView(device, swapChainImageViews[i], nullptr);
+            vkDestroyImageView(device, imageView, nullptr);
         }
 
         vkDestroySwapchainKHR(device, swapChain, nullptr);
+
+        for (size_t i = 0; i < swapChainImages.size(); i++)
+        {
+            vkDestroyBuffer(device, uniformBuffers[i], nullptr);
+            vkFreeMemory(device, uniformBuffersMemory[i], nullptr);
+        }
+
+        vkDestroyDescriptorPool(device, descriptorPool, nullptr);
     }
 
     void cleanup()
     {
+        cleanupSwapChain();
+
+        vkDestroyDescriptorSetLayout(device, descriptorSetLayout, nullptr);
+
+        vkDestroyBuffer(device, indexBuffer, nullptr);
+        vkFreeMemory(device, indexBufferMemory, nullptr);
+
+        vkDestroyBuffer(device, vertexBuffer, nullptr);
+        vkFreeMemory(device, vertexBufferMemory, nullptr);  // used by buffer, deleted after it
+
         for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++)
         {
             vkDestroySemaphore(device, renderFinishedSemaphores[i], nullptr);
@@ -1514,28 +1964,6 @@ class VulkanApplication
         }
 
         vkDestroyCommandPool(device, commandPool, nullptr);
-
-        // Must be before the imageViews and renderPass
-        for (auto framebuffer : swapChainFramebuffers)
-        {
-            vkDestroyFramebuffer(device, framebuffer, nullptr);
-        }
-
-        vkDestroyPipeline(device, graphicsPipeline, nullptr);
-
-        // Must be after graphicsPipeline
-        vkDestroyPipelineLayout(device, pipelineLayout, nullptr);
-
-        // Must be after pipeline layout
-        vkDestroyRenderPass(device, renderPass, nullptr);
-
-        for (auto imageView : swapChainImageViews)
-        {
-            vkDestroyImageView(device, imageView, nullptr);
-        }
-
-        // Must be before device
-        vkDestroySwapchainKHR(device, swapChain, nullptr);
 
         vkDestroyDevice(device, nullptr);
 
@@ -1563,7 +1991,7 @@ class VulkanApplication
     {
         try
         {
-            initLog("");
+            initLog("A:\\Development\\Vulkan Project\\VulkanTest\\x64\\Debug");
             initWindow();
             initVulkan();
             check_extensions();
@@ -1647,6 +2075,106 @@ class VulkanApplication
 // rendering before creating the new swap chain. It is possible to create a new swap chain while drawing commands on an image
 // from the old swap chain are still in-flight. You need to pass the previous swap chain to the oldSwapChain field in the
 // VkSwapchainCreateInfoKHR struct and destroy the old swap chain as soon as you've finished using it.
+//
+// *************************************************************************************************************************
+//
+// The memoryTypes array consists of VkMemoryType structs that specify the heap and properties of each type of memory. The
+// properties define special features of the memory, like being able to map it so we can write to it from the CPU. This
+// property is indicated with VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT, but we also need to use the
+// VK_MEMORY_PROPERTY_HOST_COHERENT_BIT property.
+//
+// *************************************************************************************************************************
+// TODO: @MaxAdvancedAPI, make a dedicated transfer queue, this will probably increase efficiency? (probably look that up)
+// The buffer copy command requires a queue family that supports transfer operations, which is indicated using
+// VK_QUEUE_TRANSFER_BIT. The good news is that any queue family with VK_QUEUE_GRAPHICS_BIT or VK_QUEUE_COMPUTE_BIT
+// capabilities already implicitly support VK_QUEUE_TRANSFER_BIT operations. The implementation is not required to explicitly
+// list it in queueFlags in those cases. If you like a challenge, then you can still try to use a different queue family
+// specifically for transfer operations. It will require you to make the following modifications to your program:
+//
+//     - Modify QueueFamilyIndices and findQueueFamilies to explicitly look for a queue family with the VK_QUEUE_TRANSFER
+//			bit, but not the VK_QUEUE_GRAPHICS_BIT.
+//     - Modify createLogicalDevice to request a handle to the transfer queue
+//     - Create a second command pool for command buffers that are submitted on the transfer queue family
+//     - Change the sharingMode of resources to be VK_SHARING_MODE_CONCURRENT and specify both the graphics and transfer
+//			queue families
+//     - Submit transfer commands like vkCmdCopyBuffer to the transfer queue instead of the graphics queue
+//
+// *************************************************************************************************************************
+//
+// It should be noted that in a real world application, you're not supposed to actually call vkAllocateMemory for every
+// individual buffer. The maximum number of simultaneous memory allocations is limited by the maxMemoryAllocationCount
+// physical device limit, which may be as low as 4096 even on high end hardware like an NVIDIA GTX 1080. The right way to
+// allocate memory for a large number of objects at the same time is to create a custom allocator that splits up a single
+// allocation among many different objects by using the offset parameters that we've seen in many functions.
+//
+// You can either implement such an allocator yourself, or use the
+// VulkanMemoryAllocator->(https://github.com/GPUOpen-LibrariesAndSDKs/VulkanMemoryAllocator) library provided by the GPUOpen
+// initiative.
+//
+// *************************************************************************************************************************
+// TODO: @MaxCompleteAPI, this is best practice and likely much better on performance (also cache friendly :) )
+// The previous chapter already mentioned that you should allocate multiple resources like buffers from a single memory
+// allocation, but in fact you should go a step further. Driver developers recommend
+// (https://developer.nvidia.com/vulkan-memory-management) that you also store multiple buffers, like the vertex and index
+// buffer, into a single VkBuffer and use offsets in commands like vkCmdBindVertexBuffers. The advantage is that your data is
+// more cache friendly in that case, because it's closer together. It is even possible to reuse the same chunk of memory for
+// multiple resources if they are not used during the same render operations, provided that their data is refreshed, of
+// course. This is known as aliasing and some Vulkan functions have explicit flags to specify that you want to do this.
+//
+// *************************************************************************************************************************
+//
+// To push further the software performance, a programmer can define GLM_FORCE_INLINE before any inclusion of <glm/glm.hpp>
+// to force the compiler to inline GLM code. #define GLM_FORCE_INLINE #include <glm/glm.hpp>
+//
+// *************************************************************************************************************************
+//
+// Vulkan expects the data in your structure to be aligned in memory in a specific way, for example:
+//
+// Scalars have to be aligned by N (= 4 bytes given 32 bit floats).
+// A vec2 must be aligned by 2N (= 8 bytes)
+// A vec3 or vec4 must be aligned by 4N (= 16 bytes)
+// A nested structure must be aligned by the base alignment of its members rounded up to a multiple of 16.
+// A mat4 matrix must have the same alignment as a vec4.
+//
+// You can find the full list of alignment requirements in the specification.
+// (https://www.khronos.org/registry/vulkan/specs/1.1-extensions/html/chap14.html#interfaces-resources-layout)
+//
+// *************************************************************************************************************************
+//
+// As some of the structures and function calls hinted at, it is actually possible to bind multiple descriptor sets
+// simultaneously. You need to specify a descriptor layout for each descriptor set when creating the pipeline layout. Shaders
+// can then reference specific descriptor sets like this:
+//
+//			layout(set = 0, binding = 0) uniform UniformBufferObject { ... }
+//
+// You can use this feature to put descriptors that vary per-object and descriptors that are shared into separate descriptor
+// sets. In that case you avoid rebinding most of the descriptors across draw calls which is potentially more efficient.
+//
+// *************************************************************************************************************************
+//
+// Well, I actually starting to think something is wrong in glm::lookAt.
+// I was digging a bit deeper according to the whole LH/RH issue. As it turns out glm has a #define for this GLM_LEFT_HANDED
+// or GLM_RIGHT_HANDED and it will use the matching functions lookAtRH/LH and perspectiveRH/LH … but they changed this to be
+// default on GLM_LEFT_HANDED (I guess because of Vulkan). I always forget which one is used by Direct3D and which by OpenGL,
+// so I was searching … most sources note that: LH is Direct3d/Vulkan and RH is OpenGL. But, wait ... that means it simply
+// should have worked (without the CCW rendering and without inverting anything by hand), right?
+//
+// Something was bugging me too (if you do not correct anything) you get an awkward coordinate system with Y-Axis down … that
+// is even RH ... what the hell?
+//
+// I think it should be: X-Axis:Left, Y-Axis:Up, Z-Axis: Into which is LH. With lookAt Up vector set to vec3(0.0f, 1.0f,
+// 0.0f). (Well with Unreal I’m actually used to a Z-Up System … but that is Unreal.)
+//
+// After a bit trial and error I was looking into the implementation of glm::lookAtLH and figured out that if you swap the
+// second cross product in: tvec3<t, p=""> const u(cross(f, s)); to u(cross(s, f)); everything works exactly like in a Y-Up
+// LH System, with VK_FRONT_FACE_CLOCKWISE set. So, maybe this is just a bug in glm?
+//
+// COMMENT ->
+// I used #define GLM_FORCE_LEFT_HANDED before including GLM
+// then the front face can be left at VK_FRONT_FACE_CLOCKWISE
+// The only thing that needs to be changed is the Z coordinate of the camera because in left handed systems the positive Z
+// moves away from the viewer. So: glm::lookAt(glm::vec3(0.0f, 2.0f, -2.0f), glm::vec3(0.0f, 0.0f, 0.0f),
+// glm::vec3(0.0f, 1.0f, 0.0f));
 //
 // *************************************************************************************************************************
 //
