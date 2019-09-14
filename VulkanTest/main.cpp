@@ -1,7 +1,3 @@
-// TODO: @MaxCompleteAPI, move this into a cpp for the VulkanApplication
-#define STB_IMAGE_IMPLEMENTATION
-#include <stb_image.h>
-
 #include "VulkanApplication.h"
 
 #include <iostream>

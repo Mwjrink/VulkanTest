@@ -5,9 +5,11 @@
 #include <GLFW/glfw3.h>
 
 #define GLM_FORCE_RADIANS
+#define GLM_FORCE_DEPTH_ZERO_TO_ONE
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 
+#define STB_IMAGE_IMPLEMENTATION
 #include <stb_image.h>
 
 #include <algorithm>
@@ -58,8 +60,9 @@ void DestroyDebugUtilsMessengerEXT(VkInstance instance, VkDebugUtilsMessengerEXT
 
 struct Vertex
 {
-    glm::vec2 pos;
+    glm::vec3 pos;
     glm::vec3 color;
+    glm::vec2 texCoord;
 
     static VkVertexInputBindingDescription getBindingDescription()
     {
@@ -75,13 +78,13 @@ struct Vertex
         return bindingDescription;
     }
 
-    static std::array<VkVertexInputAttributeDescription, 2> getAttributeDescriptions()
+    static std::array<VkVertexInputAttributeDescription, 3> getAttributeDescriptions()
     {
-        std::array<VkVertexInputAttributeDescription, 2> attributeDescriptions = {};
+        std::array<VkVertexInputAttributeDescription, 3> attributeDescriptions = {};
 
         attributeDescriptions[0].binding  = 0;
         attributeDescriptions[0].location = 0;
-        attributeDescriptions[0].format   = VK_FORMAT_R32G32_SFLOAT;
+        attributeDescriptions[0].format   = VK_FORMAT_R32G32B32_SFLOAT;
         attributeDescriptions[0].offset   = offsetof(Vertex, pos);
 
         // The format parameter describes the type of data for the attribute. A bit confusingly, the formats are specified
@@ -99,6 +102,11 @@ struct Vertex
         attributeDescriptions[1].location = 1;
         attributeDescriptions[1].format   = VK_FORMAT_R32G32B32_SFLOAT;
         attributeDescriptions[1].offset   = offsetof(Vertex, color);
+
+        attributeDescriptions[2].binding  = 0;
+        attributeDescriptions[2].location = 2;
+        attributeDescriptions[2].format   = VK_FORMAT_R32G32_SFLOAT;
+        attributeDescriptions[2].offset   = offsetof(Vertex, texCoord);
 
         return attributeDescriptions;
     }
@@ -239,14 +247,31 @@ class VulkanApplication
     VkImage        textureImage;
     VkDeviceMemory textureImageMemory;
 
-    const std::vector<Vertex> vertices = {{{-0.5f, -0.5f}, {1.0f, 0.0f, 0.0f}},  //
-                                          {{0.5f, -0.5f}, {0.0f, 1.0f, 0.0f}},   //
-                                          {{0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}},    //
-                                          {{-0.5f, 0.5f}, {1.0f, 1.0f, 1.0f}}};
+    VkImageView textureImageView;
+    VkSampler   textureSampler;
+
+    VkImage        depthImage;
+    VkDeviceMemory depthImageMemory;
+    VkImageView    depthImageView;
+
+    const std::vector<Vertex> vertices = {
+        {{-0.5f, -0.5f, 0.0f}, {1.0f, 0.0f, 0.0f}, {0.0f, 0.0f}},   //
+        {{0.5f, -0.5f, 0.0f}, {0.0f, 1.0f, 0.0f}, {1.0f, 0.0f}},    //
+        {{0.5f, 0.5f, 0.0f}, {0.0f, 0.0f, 1.0f}, {1.0f, 1.0f}},     //
+        {{-0.5f, 0.5f, 0.0f}, {1.0f, 1.0f, 1.0f}, {0.0f, 1.0f}},    //
+                                                                    //
+        {{-0.5f, -0.5f, -0.5f}, {1.0f, 0.0f, 0.0f}, {0.0f, 0.0f}},  //
+        {{0.5f, -0.5f, -0.5f}, {0.0f, 1.0f, 0.0f}, {1.0f, 0.0f}},   //
+        {{0.5f, 0.5f, -0.5f}, {0.0f, 0.0f, 1.0f}, {1.0f, 1.0f}},    //
+        {{-0.5f, 0.5f, -0.5f}, {1.0f, 1.0f, 1.0f}, {0.0f, 1.0f}}    //
+    };
 
     // It is possible to use either uint16_t or uint32_t for your index buffer depending on the number of entries in
     // vertices. We can stick to uint16_t for now because we're using less than 65535 unique vertices.
-    const std::vector<uint16_t> indices = {0, 1, 2, 2, 3, 0};
+    const std::vector<uint16_t> indices = {
+        0, 1, 2, 2, 3, 0,  //
+        4, 5, 6, 6, 7, 4   //
+    };
 
     bool framebufferResized = false;
 
@@ -376,7 +401,10 @@ class VulkanApplication
         createGraphicsPipeline();
         createFramebuffers();
         createCommandPool();
+        createDepthResources();
         createTextureImage();
+        createTextureImageView();
+        createTextureSampler();
         createVertexBuffer();
         createIndexBuffer();
         createUniformBuffers();
@@ -384,6 +412,139 @@ class VulkanApplication
         createDescriptorSets();
         createCommandBuffers();
         createSyncObjects();
+    }
+
+    void createDepthResources()
+    {
+        VkFormat depthFormat = findDepthFormat();
+        createImage(swapChainExtent.width, swapChainExtent.height, depthFormat, VK_IMAGE_TILING_OPTIMAL,
+                    VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, depthImage,
+                    depthImageMemory);
+        depthImageView = createImageView(depthImage, depthFormat, VK_IMAGE_ASPECT_DEPTH_BIT);
+
+        // We could do this in the render pass like the color attachment, but here I've chosen to use a pipeline barrier
+        // because the transition only needs to happen once:
+        transitionImageLayout(depthImage, depthFormat, VK_IMAGE_LAYOUT_UNDEFINED,
+                              VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
+    }
+
+    bool hasStencilComponent(VkFormat format)
+    {
+        return format == VK_FORMAT_D32_SFLOAT_S8_UINT || format == VK_FORMAT_D24_UNORM_S8_UINT;
+    }
+
+    VkFormat findDepthFormat()
+    {
+        return findSupportedFormat({VK_FORMAT_D32_SFLOAT, VK_FORMAT_D32_SFLOAT_S8_UINT, VK_FORMAT_D24_UNORM_S8_UINT},
+                                   VK_IMAGE_TILING_OPTIMAL, VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT);
+    }
+
+    VkFormat findSupportedFormat(const std::vector<VkFormat>& candidates, VkImageTiling tiling,
+                                 VkFormatFeatureFlags features)
+    {
+        for (VkFormat format : candidates)
+        {
+            VkFormatProperties props;
+            vkGetPhysicalDeviceFormatProperties(physicalDevice, format, &props);
+
+            if (tiling == VK_IMAGE_TILING_LINEAR && (props.linearTilingFeatures & features) == features)
+            {
+                return format;
+            }
+            else if (tiling == VK_IMAGE_TILING_OPTIMAL && (props.optimalTilingFeatures & features) == features)
+            {
+                return format;
+            }
+        }
+
+        graphicsLog.Log("failed to find supported format!");
+        throw std::runtime_error("failed to find supported format!");
+    }
+
+    void createTextureSampler()
+    {
+        VkSamplerCreateInfo samplerInfo = {};
+        samplerInfo.sType               = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+        samplerInfo.magFilter           = VK_FILTER_LINEAR;
+        samplerInfo.minFilter           = VK_FILTER_LINEAR;
+
+        samplerInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+        samplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+        samplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+
+        // The maxAnisotropy field limits the amount of texel samples that can be used to calculate the final color. A lower
+        // value results in better performance, but lower quality results. There is no graphics hardware available today that
+        // will use more than 16 samples, because the difference is negligible beyond that point.
+        samplerInfo.anisotropyEnable = VK_TRUE;
+        samplerInfo.maxAnisotropy    = 16;
+        // TODO: @MaxCompleteAPI, conditionally set this to(if anistropy not supported, checked in ratesuitability):
+        // samplerInfo.anisotropyEnable = VK_FALSE;
+        // samplerInfo.maxAnisotropy = 1;
+
+        // The borderColor field specifies which color is returned when sampling beyond the image with clamp to border
+        // addressing mode. It is possible to return black, white or transparent in either float or int formats. You cannot
+        // specify an arbitrary color.
+        samplerInfo.borderColor = VK_BORDER_COLOR_INT_OPAQUE_BLACK;
+
+        // The unnormalizedCoordinates field specifies which coordinate system you want to use to address texels in an image.
+        // If this field is VK_TRUE, then you can simply use coordinates within the [0, texWidth) and [0, texHeight) range.
+        // If it is VK_FALSE, then the texels are addressed using the [0, 1) range on all axes. Real-world applications
+        // almost always use normalized coordinates, because then it's possible to use textures of varying resolutions with
+        // the exact same coordinates.
+        samplerInfo.unnormalizedCoordinates = VK_FALSE;
+
+        samplerInfo.compareEnable = VK_FALSE;
+        samplerInfo.compareOp     = VK_COMPARE_OP_ALWAYS;
+
+        samplerInfo.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
+        samplerInfo.mipLodBias = 0.0f;
+        samplerInfo.minLod     = 0.0f;
+        samplerInfo.maxLod     = 0.0f;
+
+        auto result = vkCreateSampler(device, &samplerInfo, nullptr, &textureSampler);
+        throwOnError(result, "failed to create texture sampler!");
+    }
+
+    void createTextureImageView()
+    {
+        textureImageView = createImageView(textureImage, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_ASPECT_COLOR_BIT);
+    }
+
+    VkImageView createImageView(VkImage image, VkFormat format, VkImageAspectFlags aspectFlags)
+    {
+        VkImageViewCreateInfo viewInfo = {};
+        viewInfo.sType                 = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+        viewInfo.image                 = image;
+        viewInfo.viewType              = VK_IMAGE_VIEW_TYPE_2D;  // The viewType parameter allows you to treat images as 1D
+                                                                 // textures, 2D textures, 3D textures and cube maps.
+        viewInfo.format = format;
+
+        // The subresourceRange field describes what the image's purpose is and which part of the image should be
+        // accessed the following are color targets without any mipmapping levels or multiple layers.
+        viewInfo.subresourceRange.aspectMask     = aspectFlags;
+        viewInfo.subresourceRange.baseMipLevel   = 0;
+        viewInfo.subresourceRange.levelCount     = 1;
+        viewInfo.subresourceRange.baseArrayLayer = 0;
+        viewInfo.subresourceRange.layerCount     = 1;
+
+        // The components field allows you to swizzle the color channels around. For example, you can map all of the
+        // channels to the red channel for a monochrome texture. You can also map constant values of 0 and 1 to a
+        // channel. In our case we'll stick to the default mapping.
+        viewInfo.components.r = VK_COMPONENT_SWIZZLE_IDENTITY;
+        viewInfo.components.g = VK_COMPONENT_SWIZZLE_IDENTITY;
+        viewInfo.components.b = VK_COMPONENT_SWIZZLE_IDENTITY;
+        viewInfo.components.a = VK_COMPONENT_SWIZZLE_IDENTITY;
+
+        // If you were working on a stereographic 3D application, then you would create a swap chain with multiple
+        // layers. You could then create multiple image views for each image representing the views for the left and
+        // right eyes by accessing different layers.
+
+        VkImageView imageView;
+
+        auto result = vkCreateImageView(device, &viewInfo, nullptr, &imageView);
+        throwOnError(result, "failed to create image view!");
+
+        return imageView;
     }
 
     void createTextureImage()
@@ -415,6 +576,15 @@ class VulkanApplication
         createImage(texWidth, texHeight, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_TILING_OPTIMAL,
                     VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
                     textureImage, textureImageMemory);
+
+        transitionImageLayout(textureImage, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_LAYOUT_UNDEFINED,
+                              VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+        copyBufferToImage(stagingBuffer, textureImage, static_cast<uint32_t>(texWidth), static_cast<uint32_t>(texHeight));
+        transitionImageLayout(textureImage, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                              VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+
+        vkDestroyBuffer(device, stagingBuffer, nullptr);
+        vkFreeMemory(device, stagingBufferMemory, nullptr);
     }
 
     void createImage(uint32_t width, uint32_t height, VkFormat format, VkImageTiling tiling, VkImageUsageFlags usage,
@@ -504,35 +674,49 @@ class VulkanApplication
             bufferInfo.offset                 = 0;
             bufferInfo.range                  = sizeof(UniformBufferObject);  // VK_WHOLE_SIZE
 
-            VkWriteDescriptorSet descriptorWrite = {};
-            descriptorWrite.sType                = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-            descriptorWrite.dstSet               = descriptorSets[i];
-            descriptorWrite.dstBinding           = 0;
-            descriptorWrite.dstArrayElement      = 0;
+            VkDescriptorImageInfo imageInfo = {};
+            imageInfo.imageLayout           = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+            imageInfo.imageView             = textureImageView;
+            imageInfo.sampler               = textureSampler;
 
-            descriptorWrite.descriptorType  = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-            descriptorWrite.descriptorCount = 1;
+            std::array<VkWriteDescriptorSet, 2> descriptorWrites = {};
 
-            descriptorWrite.pBufferInfo      = &bufferInfo;
-            descriptorWrite.pImageInfo       = nullptr;  // Optional
-            descriptorWrite.pTexelBufferView = nullptr;  // Optional
+            descriptorWrites[0].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            descriptorWrites[0].dstSet          = descriptorSets[i];
+            descriptorWrites[0].dstBinding      = 0;
+            descriptorWrites[0].dstArrayElement = 0;
+            descriptorWrites[0].descriptorType  = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+            descriptorWrites[0].descriptorCount = 1;
+            descriptorWrites[0].pBufferInfo     = &bufferInfo;
 
-            vkUpdateDescriptorSets(device, 1, &descriptorWrite, 0, nullptr);
+            descriptorWrites[1].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            descriptorWrites[1].dstSet          = descriptorSets[i];
+            descriptorWrites[1].dstBinding      = 1;
+            descriptorWrites[1].dstArrayElement = 0;
+            descriptorWrites[1].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+            descriptorWrites[1].descriptorCount = 1;
+            descriptorWrites[1].pImageInfo      = &imageInfo;
+
+            // descriptorWrite.pTexelBufferView = nullptr;  // Optional
+
+            vkUpdateDescriptorSets(device, static_cast<uint32_t>(descriptorWrites.size()), descriptorWrites.data(), 0,
+                                   nullptr);
         }
     }
 
     void createDescriptorPool()
     {
-        VkDescriptorPoolSize poolSize = {};
-        poolSize.type                 = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-        poolSize.descriptorCount      = static_cast<uint32_t>(swapChainImages.size());
+        std::array<VkDescriptorPoolSize, 2> poolSizes = {};
+        poolSizes[0].type                             = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+        poolSizes[0].descriptorCount                  = static_cast<uint32_t>(swapChainImages.size());
+        poolSizes[1].type                             = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        poolSizes[1].descriptorCount                  = static_cast<uint32_t>(swapChainImages.size());
 
         VkDescriptorPoolCreateInfo poolInfo = {};
         poolInfo.sType                      = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
-        poolInfo.poolSizeCount              = 1;
-        poolInfo.pPoolSizes                 = &poolSize;
-
-        poolInfo.maxSets = static_cast<uint32_t>(swapChainImages.size());
+        poolInfo.poolSizeCount              = static_cast<uint32_t>(poolSizes.size());
+        poolInfo.pPoolSizes                 = poolSizes.data();
+        poolInfo.maxSets                    = static_cast<uint32_t>(swapChainImages.size());
 
         // The structure has an optional flag similar to command pools that determines if individual descriptor sets can be
         // freed or not: VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT. We're not going to touch the descriptor set after
@@ -587,10 +771,18 @@ class VulkanApplication
         // pImmutableSamplers field is only relevant for image sampling related descriptors
         uboLayoutBinding.pImmutableSamplers = nullptr;  // Optional
 
-        VkDescriptorSetLayoutCreateInfo layoutInfo = {};
-        layoutInfo.sType                           = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-        layoutInfo.bindingCount                    = 1;
-        layoutInfo.pBindings                       = &uboLayoutBinding;
+        VkDescriptorSetLayoutBinding samplerLayoutBinding = {};
+        samplerLayoutBinding.binding                      = 1;
+        samplerLayoutBinding.descriptorCount              = 1;
+        samplerLayoutBinding.descriptorType               = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        samplerLayoutBinding.pImmutableSamplers           = nullptr;
+        samplerLayoutBinding.stageFlags                   = VK_SHADER_STAGE_FRAGMENT_BIT;
+
+        std::array<VkDescriptorSetLayoutBinding, 2> bindings   = {uboLayoutBinding, samplerLayoutBinding};
+        VkDescriptorSetLayoutCreateInfo             layoutInfo = {};
+        layoutInfo.sType                                       = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+        layoutInfo.bindingCount                                = static_cast<uint32_t>(bindings.size());
+        layoutInfo.pBindings                                   = bindings.data();
 
         auto result = vkCreateDescriptorSetLayout(device, &layoutInfo, nullptr, &descriptorSetLayout);
         throwOnError(result, "failed to create descriptor set layout!");
@@ -677,42 +869,90 @@ class VulkanApplication
         barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
 
         barrier.image                           = image;
-        barrier.subresourceRange.aspectMask     = VK_IMAGE_ASPECT_COLOR_BIT;
         barrier.subresourceRange.baseMipLevel   = 0;
         barrier.subresourceRange.levelCount     = 1;
         barrier.subresourceRange.baseArrayLayer = 0;
         barrier.subresourceRange.layerCount     = 1;
 
-        barrier.srcAccessMask = 0;  // TODO
-        barrier.dstAccessMask = 0;  // TODO
+        VkPipelineStageFlags sourceStage;
+        VkPipelineStageFlags destinationStage;
+
+        // The depth buffer will be read from to perform depth tests to see if a fragment is visible, and will be written to
+        // when a new fragment is drawn. The reading happens in the VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT stage and the
+        // writing in the VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT. You should pick the earliest pipeline stage that matches
+        // the specified operations, so that it is ready for usage as depth attachment when it needs to be.
+
+        if (oldLayout == VK_IMAGE_LAYOUT_UNDEFINED && newLayout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL)
+        {
+            barrier.srcAccessMask = 0;
+            barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+
+            sourceStage      = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
+            destinationStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
+        }
+        else if (oldLayout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL && newLayout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)
+        {
+            barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+            barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+
+            sourceStage      = VK_PIPELINE_STAGE_TRANSFER_BIT;
+            destinationStage = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+        }
+        else if (oldLayout == VK_IMAGE_LAYOUT_UNDEFINED && newLayout == VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL)
+        {
+            barrier.srcAccessMask = 0;
+            barrier.dstAccessMask =
+                VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+
+            sourceStage      = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
+            destinationStage = VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT;
+        }
+        else
+        {
+            throw std::invalid_argument("unsupported layout transition!");
+        }
+
+        if (newLayout == VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL)
+        {
+            barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
+
+            if (hasStencilComponent(format))
+            {
+                barrier.subresourceRange.aspectMask |= VK_IMAGE_ASPECT_STENCIL_BIT;
+            }
+        }
+        else
+        {
+            barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        }
 
         // All types of pipeline barriers are submitted using the same function. The first parameter after the command buffer
         // specifies in which pipeline stage the operations occur that should happen before the barrier. The second parameter
-        // specifies the pipeline stage in which operations will wait on the barrier. The pipeline stages that you are allowed
-        // to specify before and after the barrier depend on how you use the resource before and after the barrier. The
-        // allowed values are listed in this table of the specification. For example, if you're going to read from a uniform
-        // after the barrier, you would specify a usage of VK_ACCESS_UNIFORM_READ_BIT and the earliest shader that will read
-        // from the uniform as pipeline stage, for example VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT. It would not make sense to
-        // specify a non-shader pipeline stage for this type of usage and the validation layers will warn you when you specify
-        // a pipeline stage that does not match the type of usage.
+        // specifies the pipeline stage in which operations will wait on the barrier. The pipeline stages that you are
+        // allowed to specify before and after the barrier depend on how you use the resource before and after the barrier.
+        // The allowed values are listed in this table of the specification. For example, if you're going to read from a
+        // uniform after the barrier, you would specify a usage of VK_ACCESS_UNIFORM_READ_BIT and the earliest shader that
+        // will read from the uniform as pipeline stage, for example VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT. It would not make
+        // sense to specify a non-shader pipeline stage for this type of usage and the validation layers will warn you when
+        // you specify a pipeline stage that does not match the type of usage.
         //
         // The third parameter is either 0 or VK_DEPENDENCY_BY_REGION_BIT. The latter turns the barrier into a per-region
-        // condition. That means that the implementation is allowed to already begin reading from the parts of a resource that
-        // were written so far, for example.
+        // condition. That means that the implementation is allowed to already begin reading from the parts of a resource
+        // that were written so far, for example.
         //
         // The last three pairs of parameters reference arrays of pipeline barriers of the three available types: memory
         // barriers, buffer memory barriers, and image memory barriers like the one we're using here. Note that we're not
         // using the VkFormat parameter yet, but we'll be using that one for special transitions in the depth buffer chapter.
-        vkCmdPipelineBarrier(commandBuffer, 0 /* TODO */, 0 /* TODO */, 0, 0, nullptr, 0, nullptr, 1, &barrier);
+        vkCmdPipelineBarrier(commandBuffer, sourceStage, destinationStage, 0, 0, nullptr, 0, nullptr, 1, &barrier);
 
         endSingleTimeCommands(commandBuffer);
     }
 
-	void copyBufferToImage(VkBuffer buffer, VkImage image, uint32_t width, uint32_t height)
+    void copyBufferToImage(VkBuffer buffer, VkImage image, uint32_t width, uint32_t height)
     {
         VkCommandBuffer commandBuffer = beginSingleTimeCommands();
 
-		VkBufferImageCopy region = {};
+        VkBufferImageCopy region = {};
         region.bufferOffset      = 0;
         region.bufferRowLength   = 0;
         region.bufferImageHeight = 0;
@@ -725,7 +965,7 @@ class VulkanApplication
         region.imageOffset = {0, 0, 0};
         region.imageExtent = {width, height, 1};
 
-		vkCmdCopyBufferToImage(commandBuffer, buffer, image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
+        vkCmdCopyBufferToImage(commandBuffer, buffer, image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
 
         endSingleTimeCommands(commandBuffer);
     }
@@ -1030,26 +1270,27 @@ class VulkanApplication
         colorAttachmentRef.attachment            = 0;
         colorAttachmentRef.layout                = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
 
+        VkAttachmentDescription depthAttachment = {};
+        depthAttachment.format                  = findDepthFormat();
+        depthAttachment.samples                 = VK_SAMPLE_COUNT_1_BIT;
+        depthAttachment.loadOp                  = VK_ATTACHMENT_LOAD_OP_CLEAR;
+        depthAttachment.storeOp                 = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+        depthAttachment.stencilLoadOp           = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+        depthAttachment.stencilStoreOp          = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+        depthAttachment.initialLayout           = VK_IMAGE_LAYOUT_UNDEFINED;
+        depthAttachment.finalLayout             = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+
+        VkAttachmentReference depthAttachmentRef = {};
+        depthAttachmentRef.attachment            = 1;
+        depthAttachmentRef.layout                = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+
         VkSubpassDescription subpass = {};
         // Vulkan may also support compute subpasses in the future, so we have to be explicit about this being a graphics
         // subpass.
-        subpass.pipelineBindPoint    = VK_PIPELINE_BIND_POINT_GRAPHICS;
-        subpass.colorAttachmentCount = 1;
-        subpass.pColorAttachments    = &colorAttachmentRef;
-
-        // The following other types of attachments can be referenced by a subpass:
-        // pInputAttachments:		// Attachments that are read from a shader
-        // pResolveAttachments:		// Attachments used for multisampling color attachments
-        // pDepthStencilAttachment: // Attachment for depth and stencil data
-        // pPreserveAttachments:	// Attachments that are not used by this subpass, but for which the data must be
-        // preserved
-
-        VkRenderPassCreateInfo renderPassInfo = {};
-        renderPassInfo.sType                  = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
-        renderPassInfo.attachmentCount        = 1;
-        renderPassInfo.pAttachments           = &colorAttachment;
-        renderPassInfo.subpassCount           = 1;
-        renderPassInfo.pSubpasses             = &subpass;
+        subpass.pipelineBindPoint       = VK_PIPELINE_BIND_POINT_GRAPHICS;
+        subpass.colorAttachmentCount    = 1;
+        subpass.pColorAttachments       = &colorAttachmentRef;
+        subpass.pDepthStencilAttachment = &depthAttachmentRef;
 
         // There are two built-in dependencies that take care of the transition at the start of the render pass and at
         // the end of the render pass, but the former does not occur at the right time. It assumes that the transition
@@ -1070,6 +1311,23 @@ class VulkanApplication
 
         dependency.dstStageMask  = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
         dependency.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+
+        // The following other types of attachments can be referenced by a subpass:
+        // pInputAttachments:		// Attachments that are read from a shader
+        // pResolveAttachments:		// Attachments used for multisampling color attachments
+        // pDepthStencilAttachment: // Attachment for depth and stencil data
+        // pPreserveAttachments:	// Attachments that are not used by this subpass, but for which the data must be
+        // preserved
+
+        std::array<VkAttachmentDescription, 2> attachments    = {colorAttachment, depthAttachment};
+        VkRenderPassCreateInfo                 renderPassInfo = {};
+        renderPassInfo.sType                                  = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
+        renderPassInfo.attachmentCount                        = static_cast<uint32_t>(attachments.size());
+        renderPassInfo.pAttachments                           = attachments.data();
+        renderPassInfo.subpassCount                           = 1;
+        renderPassInfo.pSubpasses                             = &subpass;
+        renderPassInfo.dependencyCount                        = 1;
+        renderPassInfo.pDependencies                          = &dependency;
 
         renderPassInfo.dependencyCount = 1;
         renderPassInfo.pDependencies   = &dependency;
@@ -1405,39 +1663,9 @@ class VulkanApplication
     {
         swapChainImageViews.resize(swapChainImages.size());
 
-        for (size_t i = 0; i < swapChainImages.size(); i++)
+        for (uint32_t i = 0; i < swapChainImages.size(); i++)
         {
-            VkImageViewCreateInfo createInfo = {};
-            createInfo.sType                 = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
-            createInfo.image                 = swapChainImages[i];
-
-            createInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;  // The viewType parameter allows you to treat images as 1D
-                                                          // textures, 2D textures, 3D textures and cube maps.
-            createInfo.format = swapChainImageFormat;
-
-            // The components field allows you to swizzle the color channels around. For example, you can map all of the
-            // channels to the red channel for a monochrome texture. You can also map constant values of 0 and 1 to a
-            // channel. In our case we'll stick to the default mapping.
-            createInfo.components.r = VK_COMPONENT_SWIZZLE_IDENTITY;
-            createInfo.components.g = VK_COMPONENT_SWIZZLE_IDENTITY;
-            createInfo.components.b = VK_COMPONENT_SWIZZLE_IDENTITY;
-            createInfo.components.a = VK_COMPONENT_SWIZZLE_IDENTITY;
-
-            // The subresourceRange field describes what the image's purpose is and which part of the image should be
-            // accessed
-            // the following are color targets without any mipmapping levels or multiple layers.
-            createInfo.subresourceRange.aspectMask     = VK_IMAGE_ASPECT_COLOR_BIT;
-            createInfo.subresourceRange.baseMipLevel   = 0;
-            createInfo.subresourceRange.levelCount     = 1;
-            createInfo.subresourceRange.baseArrayLayer = 0;
-            createInfo.subresourceRange.layerCount     = 1;
-
-            // If you were working on a stereographic 3D application, then you would create a swap chain with multiple
-            // layers. You could then create multiple image views for each image representing the views for the left and
-            // right eyes by accessing different layers.
-
-            auto result = vkCreateImageView(device, &createInfo, nullptr, &swapChainImageViews[i]);
-            throwOnError(result, "failed to create image views!");
+            swapChainImageViews[i] = createImageView(swapChainImages[i], swapChainImageFormat, VK_IMAGE_ASPECT_COLOR_BIT);
         }
     }
 
@@ -1558,6 +1786,7 @@ class VulkanApplication
         }
 
         VkPhysicalDeviceFeatures deviceFeatures = {};
+        deviceFeatures.samplerAnisotropy        = VK_TRUE;
 
         VkDeviceCreateInfo createInfo = {};
         createInfo.sType              = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
@@ -1782,6 +2011,11 @@ class VulkanApplication
         if (!swapChainAdequate) return 0;
 
         if (indices.graphicsFamily.value() == indices.presentFamily.value()) score += 10000;
+
+        VkPhysicalDeviceFeatures supportedFeatures;
+        vkGetPhysicalDeviceFeatures(device, &supportedFeatures);
+
+        if (!supportedFeatures.samplerAnisotropy) return 0;
 
         // Maximum possible size of textures affects graphics quality
         // score += deviceProperties.limits.maxImageDimension2D;
@@ -2130,6 +2364,12 @@ class VulkanApplication
     {
         cleanupSwapChain();
 
+        vkDestroySampler(device, textureSampler, nullptr);
+        vkDestroyImageView(device, textureImageView, nullptr);
+
+        vkDestroyImage(device, textureImage, nullptr);
+        vkFreeMemory(device, textureImageMemory, nullptr);
+
         vkDestroyDescriptorSetLayout(device, descriptorSetLayout, nullptr);
 
         vkDestroyBuffer(device, indexBuffer, nullptr);
@@ -2368,6 +2608,31 @@ class VulkanApplication
 // VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL: Optimal as source in a transfer operation, like vkCmdCopyImageToBuffer
 // VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL: Optimal as destination in a transfer operation, like vkCmdCopyBufferToImage
 // VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL: Optimal for sampling from a shader
+//
+// *************************************************************************************************************************
+// TODO: @MaxCompleteAPI, implement this;
+// All of the helper functions that submit commands so far have been set up to execute synchronously by waiting for the queue
+// to become idle. For practical applications it is recommended to combine these operations in a single command buffer and
+// execute them asynchronously for higher throughput, especially the transitions and copy in the createTextureImage function.
+// Try to experiment with this by creating a setupCommandBuffer that the helper functions record commands into, and add a
+// flushSetupCommands to execute the commands that have been recorded so far. It's best to do this after the texture mapping
+// works to check if the texture resources are still set up correctly.
+//
+// *************************************************************************************************************************
+//
+// The problem is that the fragments of the lower square are drawn over the fragments of the upper square, simply because it
+// comes later in the index array. There are two ways to solve this:
+//
+// Sort all of the draw calls by depth from back to front
+// Use depth testing with a depth buffer
+//
+// The first approach is commonly used for drawing transparent objects, because order-independent transparency is a difficult
+// challenge to solve. However, the problem of ordering fragments by depth is much more commonly solved using a depth buffer.
+// A depth buffer is an additional attachment that stores the depth for every position, just like the color attachment stores
+// the color of every position. Every time the rasterizer produces a fragment, the depth test will check if the new fragment
+// is closer than the previous one. If it isn't, then the new fragment is discarded. A fragment that passes the depth test
+// writes its own depth to the depth buffer. It is possible to manipulate this value from the fragment shader, just like you
+// can manipulate the color output.
 //
 // *************************************************************************************************************************
 //
