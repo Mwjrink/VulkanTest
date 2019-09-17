@@ -174,7 +174,10 @@
     <ClCompile Include="Main.cpp" />
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="Configurations.h" />
     <ClInclude Include="Logger.h" />
+    <ClInclude Include="Model.h" />
+    <ClInclude Include="Vertex.h" />
     <ClInclude Include="VulkanApplication.h" />
   </ItemGroup>
   <ItemGroup>

@@ -36,7 +36,9 @@
 #include <experimental/optional>
 #endif
 
-#include "logger.h"
+#include "Logger.h"
+#include "Model.h"
+#include "Vertex.h"
 
 const int MAX_FRAMES_IN_FLIGHT = 2;
 
@@ -63,65 +65,6 @@ void DestroyDebugUtilsMessengerEXT(VkInstance instance, VkDebugUtilsMessengerEXT
         func(instance, debugMessenger, pAllocator);
     }
 }
-
-struct Vertex
-{
-    glm::vec3 pos;
-    glm::vec3 color;
-    glm::vec2 texCoord;
-
-    bool operator==(const Vertex& other) const
-    {
-        return pos == other.pos && color == other.color && texCoord == other.texCoord;
-    }
-
-    static VkVertexInputBindingDescription getBindingDescription()
-    {
-        VkVertexInputBindingDescription bindingDescription = {};
-        bindingDescription.binding                         = 0;
-        bindingDescription.stride                          = sizeof(Vertex);
-        bindingDescription.inputRate                       = VK_VERTEX_INPUT_RATE_VERTEX;
-
-        // inputRate parameter can have one of the following values:
-        // VK_VERTEX_INPUT_RATE_VERTEX:   // Move to the next data entry after each vertex
-        // VK_VERTEX_INPUT_RATE_INSTANCE: // Move to the next data entry after each instance
-
-        return bindingDescription;
-    }
-
-    static std::array<VkVertexInputAttributeDescription, 3> getAttributeDescriptions()
-    {
-        std::array<VkVertexInputAttributeDescription, 3> attributeDescriptions = {};
-
-        attributeDescriptions[0].binding  = 0;
-        attributeDescriptions[0].location = 0;
-        attributeDescriptions[0].format   = VK_FORMAT_R32G32B32_SFLOAT;
-        attributeDescriptions[0].offset   = offsetof(Vertex, pos);
-
-        // The format parameter describes the type of data for the attribute. A bit confusingly, the formats are specified
-        // using the same enumeration as color formats. The following shader types and formats are commonly used together:
-        // float: VK_FORMAT_R32_SFLOAT
-        // vec2: VK_FORMAT_R32G32_SFLOAT
-        // vec3: VK_FORMAT_R32G32B32_SFLOAT
-        // vec4: VK_FORMAT_R32G32B32A32_SFLOAT
-
-        // ivec2: VK_FORMAT_R32G32_SINT, a 2-component vector of 32-bit signed integers
-        // uvec4: VK_FORMAT_R32G32B32A32_UINT, a 4-component vector of 32-bit unsigned integers
-        // double: VK_FORMAT_R64_SFLOAT, a double-precision (64-bit) float
-
-        attributeDescriptions[1].binding  = 0;
-        attributeDescriptions[1].location = 1;
-        attributeDescriptions[1].format   = VK_FORMAT_R32G32B32_SFLOAT;
-        attributeDescriptions[1].offset   = offsetof(Vertex, color);
-
-        attributeDescriptions[2].binding  = 0;
-        attributeDescriptions[2].location = 2;
-        attributeDescriptions[2].format   = VK_FORMAT_R32G32_SFLOAT;
-        attributeDescriptions[2].offset   = offsetof(Vertex, texCoord);
-
-        return attributeDescriptions;
-    }
-};
 
 namespace std
 {
@@ -212,16 +155,6 @@ class VulkanApplication
 
     GLFWwindow* window;
 
-    // TODO: @MaxCompleteAPI, these should not be constants
-    // TODO: @MaxCompleteAPI, make a simple configurations class that stores configs in a .ini or some such file (maybe allow
-    //			it to be encrypted) and you can update those values and read them so they persist accross runs (for settings
-    //			and stuff)
-    int WIDTH  = 800;
-    int HEIGHT = 600;
-
-    const std::string MODEL_PATH   = "models/chalet.obj";
-    const std::string TEXTURE_PATH = "textures/chalet.jpg";
-
     std::ofstream graphicsLogFile;
     Logger        graphicsLog;
 
@@ -258,16 +191,6 @@ class VulkanApplication
     std::vector<VkFence>     inFlightFences;
     size_t                   currentFrame = 0;
 
-    std::vector<Vertex>   vertices;
-    std::vector<uint32_t> indices;  // It is possible to use either uint16_t or uint32_t for your index buffer depending on
-                                    // the number of entries in vertices. We can stick to uint16_t for now because we're
-                                    // using less than 65535 unique vertices.
-
-    VkBuffer       vertexBuffer;
-    VkDeviceMemory vertexBufferMemory;
-    VkBuffer       indexBuffer;
-    VkDeviceMemory indexBufferMemory;
-
     // We need multiple because we need one per in-flight frame (model/projection etc could (vast majority of cases) be
     // different every frame
     std::vector<VkBuffer>       uniformBuffers;
@@ -276,12 +199,7 @@ class VulkanApplication
     VkDescriptorPool             descriptorPool;
     std::vector<VkDescriptorSet> descriptorSets;
 
-    uint32_t       mipLevels;
-    VkImage        textureImage;
-    VkDeviceMemory textureImageMemory;
-
-    VkImageView textureImageView;
-    VkSampler   textureSampler;
+    VkSampler textureSampler;
 
     VkImage        depthImage;
     VkDeviceMemory depthImageMemory;
@@ -293,7 +211,16 @@ class VulkanApplication
 
     VkSampleCountFlagBits msaaSamples = VK_SAMPLE_COUNT_1_BIT;
 
+    uint16_t window_width, window_height;
+
+    bool deferred_init = false;
+
+    std::string window_title;
+    bool        fullscreen;
+
     bool framebufferResized = false;
+
+    std::vector<RenderGroup> renderGroups;
 
     // cant seem to find the macro for this
     const std::vector<const char*> validationLayers = {"VK_LAYER_KHRONOS_validation", "VK_LAYER_LUNARG_monitor",
@@ -301,37 +228,11 @@ class VulkanApplication
 
     const std::vector<const char*> deviceExtensions = {VK_KHR_SWAPCHAIN_EXTENSION_NAME};
 
-#ifdef NDEBUG
+#ifdef DEBUG_OPTIONS
     const bool enableValidationLayers = false;
 #else
     const bool enableValidationLayers = true;
 #endif
-
-    // TODO: @MaxCompleteAPI, pass in a Logger instead of creating it here
-    void initLog(std::string logPath)
-    {
-        std::string fileName = "graphics0.log";
-
-#ifdef _WIN32
-        // TODO: @MaxWindowsSpecific, find a way to make the directory if it does not alreay exist (probably add an ini
-        // option for the path) also add a date-timestamp to this
-        int logNumber = 0;
-        while (std::filesystem::exists(logPath + "/Graphics/" + fileName))
-        {
-            fileName = "graphics" + std::to_string(logNumber) + ".log";
-            logNumber++;
-        }
-#elif __APPLE__
-        // TODO: @MaxAppleSupport, get a proper path to log to
-        // also add a date-timestamp to this
-        logPath = "/Users/maxrink/Development/Vulkan Project/VulkanTest";
-#endif
-
-        graphicsLogFile.open(logPath + "/Graphics/" + fileName);
-        graphicsLogFile.clear();
-
-        graphicsLog = Logger(&graphicsLogFile);
-    }
 
     void initWindow()
     {
@@ -342,7 +243,8 @@ class VulkanApplication
         glfwWindowHint(GLFW_RESIZABLE, GLFW_FALSE);
 
         // create the window and store a pointer to it
-        window = glfwCreateWindow(WIDTH, HEIGHT, "Vulkan", nullptr, nullptr);
+        window = glfwCreateWindow(window_width, window_height, window_title.c_str(),
+                                  fullscreen ? glfwGetPrimaryMonitor() : nullptr, nullptr);
         // TODO @MaxYikes, I mean this is cool but wtf, code: 17894375109
         glfwSetWindowUserPointer(window, this);
         glfwSetFramebufferSizeCallback(window, framebufferResizeCallback);
@@ -423,16 +325,18 @@ class VulkanApplication
         createColorResources();
         createDepthResources();
         createFramebuffers();
-        createTextureImage();
-        createTextureImageView();
+        // createTextureImage();
+        // createTextureImageView();
         createTextureSampler();
-        loadModel();
-        createVertexBuffer();
-        createIndexBuffer();
+        // loadMesh();
+        // createVertexBuffer();
+        // createIndexBuffer();
         createUniformBuffers();
         createDescriptorPool();
         createDescriptorSets();
+
         createCommandBuffers();
+
         createSyncObjects();
     }
 
@@ -451,14 +355,43 @@ class VulkanApplication
                               1);
     }
 
-    void loadModel()
+    //
+    //
+    //
+    //
+    //
+
+    void GenerateCommandBuffers(int renderGroupIndex)
+    {
+        renderGroups[renderGroupIndex].;
+        //
+    }
+
+    void loadModel(int renderGroupIndex, std::string mesh_path, std::string texture_path)
+    {
+        // TODO: @MaxCompleteAPI, add debug only or optional checks for index within bounds of vector
+        int index = renderGroups[renderGroupIndex].models.size();
+        renderGroups[renderGroupIndex].models.push_back(Model());
+        auto model = &renderGroups[renderGroupIndex].models[index];
+
+        model->device       = &device;
+        model->mesh_path    = mesh_path;
+        model->texture_path = texture_path;
+
+        loadMesh(*model);
+
+        createTextureImage(*model);
+        createTextureImageView(*model);
+    }
+
+    void loadMesh(Model& model)
     {
         tinyobj::attrib_t                attrib;
         std::vector<tinyobj::shape_t>    shapes;
         std::vector<tinyobj::material_t> materials;
         std::string                      warn, err;
 
-        if (!tinyobj::LoadObj(&attrib, &shapes, &materials, &warn, &err, MODEL_PATH.c_str()))
+        if (!tinyobj::LoadObj(&attrib, &shapes, &materials, &warn, &err, model.mesh_path.c_str()))
         {
             throw std::runtime_error(warn + err);
         }
@@ -482,14 +415,134 @@ class VulkanApplication
 
                 if (uniqueVertices.count(vertex) == 0)
                 {
-                    uniqueVertices[vertex] = static_cast<uint32_t>(vertices.size());
-                    vertices.push_back(vertex);
+                    uniqueVertices[vertex] = static_cast<uint32_t>(model.vertices.size());
+                    model.vertices.push_back(vertex);
                 }
 
-                indices.push_back(uniqueVertices[vertex]);
+                model.indices.push_back(uniqueVertices[vertex]);
             }
         }
     }
+
+    void createIndexBuffer(Model& model)
+    {
+        VkDeviceSize bufferSize = sizeof(model.indices[0]) * model.indices.size();
+
+        VkBuffer       stagingBuffer;
+        VkDeviceMemory stagingBufferMemory;
+        createBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+                     VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, stagingBuffer,
+                     stagingBufferMemory);
+
+        void* data;
+        vkMapMemory(device, stagingBufferMemory, 0, bufferSize, 0, &data);
+        memcpy(data, model.indices.data(), (size_t)bufferSize);
+        vkUnmapMemory(device, stagingBufferMemory);
+
+        createBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
+                     VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, model.indexBuffer, model.indexBufferMemory);
+
+        buffercpy(stagingBuffer, model.indexBuffer, bufferSize);
+
+        vkDestroyBuffer(device, stagingBuffer, nullptr);
+        vkFreeMemory(device, stagingBufferMemory, nullptr);
+    }
+
+    void createVertexBuffer(Model& model)
+    {
+        VkDeviceSize bufferSize = sizeof(model.vertices[0]) * model.vertices.size();
+
+        VkBuffer       stagingBuffer;
+        VkDeviceMemory stagingBufferMemory;
+        createBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+                     VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, stagingBuffer,
+                     stagingBufferMemory);
+
+        void* data;
+        vkMapMemory(device, stagingBufferMemory, 0, bufferSize, 0, &data);
+        memcpy(data, model.vertices.data(), (size_t)bufferSize);
+        vkUnmapMemory(device, stagingBufferMemory);
+
+        createBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+                     VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, model.vertexBuffer, model.vertexBufferMemory);
+
+        buffercpy(stagingBuffer, model.vertexBuffer, bufferSize);
+
+        vkDestroyBuffer(device, stagingBuffer, nullptr);
+        vkFreeMemory(device, stagingBufferMemory, nullptr);
+
+        // You can now simply memcpy the vertex data to the mapped memory and unmap it again using vkUnmapMemory.
+        // Unfortunately the driver may not immediately copy the data into the buffer memory, for example because of caching.
+        // It is also possible that writes to the buffer are not visible in the mapped memory yet. There are two ways to deal
+        // with that problem:
+        //
+        // Use a memory heap that is host coherent, indicated with VK_MEMORY_PROPERTY_HOST_COHERENT_BIT
+        //
+        // Call vkFlushMappedMemoryRanges to after writing to the mapped memory, and call vkInvalidateMappedMemoryRanges
+        // before reading from the mapped memory
+
+        // The transfer of data to the GPU is an operation that happens in the background and the specification simply tells
+        // us that it is guaranteed to be complete as of the next call to vkQueueSubmit.
+    }
+
+    //
+
+    void createTextureImage(Model& model)
+    {
+        int          texWidth, texHeight, texChannels;
+        stbi_uc*     pixels    = stbi_load(model.texture_path.c_str(), &texWidth, &texHeight, &texChannels, STBI_rgb_alpha);
+        VkDeviceSize imageSize = (uint64_t)texWidth * texHeight * 4;
+
+        model.mipLevels = static_cast<uint32_t>(std::floor(std::log2(std::max(texWidth, texHeight)))) + 1;
+
+        if (!pixels)
+        {
+            graphicsLog.Log("failed to load texture image!");
+            throw std::runtime_error("failed to load texture image!");
+        }
+
+        VkBuffer       stagingBuffer;
+        VkDeviceMemory stagingBufferMemory;
+
+        createBuffer(imageSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+                     VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, stagingBuffer,
+                     stagingBufferMemory);
+
+        void* data;
+        vkMapMemory(device, stagingBufferMemory, 0, imageSize, 0, &data);
+        memcpy(data, pixels, static_cast<size_t>(imageSize));
+        vkUnmapMemory(device, stagingBufferMemory);
+
+        stbi_image_free(pixels);
+
+        createImage(texWidth, texHeight, model.mipLevels, VK_SAMPLE_COUNT_1_BIT, VK_FORMAT_R8G8B8A8_UNORM,
+                    VK_IMAGE_TILING_OPTIMAL,
+                    VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+                    VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, model.textureImage, model.textureImageMemory);
+
+        transitionImageLayout(model.textureImage, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_LAYOUT_UNDEFINED,
+                              VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, model.mipLevels);
+        copyBufferToImage(stagingBuffer, model.textureImage, static_cast<uint32_t>(texWidth),
+                          static_cast<uint32_t>(texHeight));
+        // transitioned to VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL while generating mipmaps
+
+        vkDestroyBuffer(device, stagingBuffer, nullptr);
+        vkFreeMemory(device, stagingBufferMemory, nullptr);
+
+        generateMipmaps(model.textureImage, VK_FORMAT_R8G8B8A8_UNORM, texWidth, texHeight, model.mipLevels);
+    }
+
+    void createTextureImageView(Model& model)
+    {
+        model.textureImageView =
+            createImageView(model.textureImage, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_ASPECT_COLOR_BIT, model.mipLevels);
+    }
+
+    //
+    //
+    //
+    //
+    //
 
     void createDepthResources()
     {
@@ -582,11 +635,6 @@ class VulkanApplication
         throwOnError(result, "failed to create texture sampler!");
     }
 
-    void createTextureImageView()
-    {
-        textureImageView = createImageView(textureImage, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_ASPECT_COLOR_BIT, mipLevels);
-    }
-
     VkImageView createImageView(VkImage image, VkFormat format, VkImageAspectFlags aspectFlags, uint32_t mipLevels)
     {
         VkImageViewCreateInfo viewInfo = {};
@@ -622,49 +670,6 @@ class VulkanApplication
         throwOnError(result, "failed to create image view!");
 
         return imageView;
-    }
-
-    void createTextureImage()
-    {
-        int          texWidth, texHeight, texChannels;
-        stbi_uc*     pixels    = stbi_load(TEXTURE_PATH.c_str(), &texWidth, &texHeight, &texChannels, STBI_rgb_alpha);
-        VkDeviceSize imageSize = texWidth * texHeight * 4;
-
-        mipLevels = static_cast<uint32_t>(std::floor(std::log2(std::max(texWidth, texHeight)))) + 1;
-
-        if (!pixels)
-        {
-            graphicsLog.Log("failed to load texture image!");
-            throw std::runtime_error("failed to load texture image!");
-        }
-
-        VkBuffer       stagingBuffer;
-        VkDeviceMemory stagingBufferMemory;
-
-        createBuffer(imageSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
-                     VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, stagingBuffer,
-                     stagingBufferMemory);
-
-        void* data;
-        vkMapMemory(device, stagingBufferMemory, 0, imageSize, 0, &data);
-        memcpy(data, pixels, static_cast<size_t>(imageSize));
-        vkUnmapMemory(device, stagingBufferMemory);
-
-        stbi_image_free(pixels);
-
-        createImage(texWidth, texHeight, mipLevels, VK_SAMPLE_COUNT_1_BIT, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_TILING_OPTIMAL,
-                    VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
-                    VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, textureImage, textureImageMemory);
-
-        transitionImageLayout(textureImage, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_LAYOUT_UNDEFINED,
-                              VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, mipLevels);
-        copyBufferToImage(stagingBuffer, textureImage, static_cast<uint32_t>(texWidth), static_cast<uint32_t>(texHeight));
-        // transitioned to VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL while generating mipmaps
-
-        vkDestroyBuffer(device, stagingBuffer, nullptr);
-        vkFreeMemory(device, stagingBufferMemory, nullptr);
-
-        generateMipmaps(textureImage, VK_FORMAT_R8G8B8A8_UNORM, texWidth, texHeight, mipLevels);
     }
 
     void generateMipmaps(VkImage image, VkFormat imageFormat, int32_t texWidth, int32_t texHeight, uint32_t mipLevels)
@@ -956,67 +961,6 @@ class VulkanApplication
         throwOnError(result, "failed to create descriptor set layout!");
     }
 
-    void createIndexBuffer()
-    {
-        VkDeviceSize bufferSize = sizeof(indices[0]) * indices.size();
-
-        VkBuffer       stagingBuffer;
-        VkDeviceMemory stagingBufferMemory;
-        createBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
-                     VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, stagingBuffer,
-                     stagingBufferMemory);
-
-        void* data;
-        vkMapMemory(device, stagingBufferMemory, 0, bufferSize, 0, &data);
-        memcpy(data, indices.data(), (size_t)bufferSize);
-        vkUnmapMemory(device, stagingBufferMemory);
-
-        createBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
-                     VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, indexBuffer, indexBufferMemory);
-
-        copyBuffer(stagingBuffer, indexBuffer, bufferSize);
-
-        vkDestroyBuffer(device, stagingBuffer, nullptr);
-        vkFreeMemory(device, stagingBufferMemory, nullptr);
-    }
-
-    void createVertexBuffer()
-    {
-        VkDeviceSize bufferSize = sizeof(vertices[0]) * vertices.size();
-
-        VkBuffer       stagingBuffer;
-        VkDeviceMemory stagingBufferMemory;
-        createBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
-                     VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, stagingBuffer,
-                     stagingBufferMemory);
-
-        void* data;
-        vkMapMemory(device, stagingBufferMemory, 0, bufferSize, 0, &data);
-        memcpy(data, vertices.data(), (size_t)bufferSize);
-        vkUnmapMemory(device, stagingBufferMemory);
-
-        createBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
-                     VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, vertexBuffer, vertexBufferMemory);
-
-        copyBuffer(stagingBuffer, vertexBuffer, bufferSize);
-
-        vkDestroyBuffer(device, stagingBuffer, nullptr);
-        vkFreeMemory(device, stagingBufferMemory, nullptr);
-
-        // You can now simply memcpy the vertex data to the mapped memory and unmap it again using vkUnmapMemory.
-        // Unfortunately the driver may not immediately copy the data into the buffer memory, for example because of caching.
-        // It is also possible that writes to the buffer are not visible in the mapped memory yet. There are two ways to deal
-        // with that problem:
-        //
-        // Use a memory heap that is host coherent, indicated with VK_MEMORY_PROPERTY_HOST_COHERENT_BIT
-        //
-        // Call vkFlushMappedMemoryRanges to after writing to the mapped memory, and call vkInvalidateMappedMemoryRanges
-        // before reading from the mapped memory
-
-        // The transfer of data to the GPU is an operation that happens in the background and the specification simply tells
-        // us that it is guaranteed to be complete as of the next call to vkQueueSubmit.
-    }
-
     void transitionImageLayout(VkImage image, VkFormat format, VkImageLayout oldLayout, VkImageLayout newLayout,
                                uint32_t mipLevels)
     {
@@ -1147,7 +1091,7 @@ class VulkanApplication
     }
 
     // TODO: @MaxCompleteAPI, maybe rename this to buffercpy, also reorder params to (dst, src, size) (same as memcpy)
-    void copyBuffer(VkBuffer srcBuffer, VkBuffer dstBuffer, VkDeviceSize size)
+    void buffercpy(VkBuffer srcBuffer, VkBuffer dstBuffer, VkDeviceSize size)
     {
         // TODO: @MaxCompleteAPI;
         // Memory transfer operations are executed using command buffers, just like drawing commands. Therefore we must first
@@ -1253,7 +1197,13 @@ class VulkanApplication
         createUniformBuffers();
         createDescriptorPool();
         createDescriptorSets();
+        //
+        //
+        //
         createCommandBuffers();
+        //
+        //
+        //
     }
 
     void createSyncObjects()
@@ -1347,20 +1297,20 @@ class VulkanApplication
 
             vkCmdBindPipeline(commandBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, graphicsPipeline);
 
-            VkBuffer     vertexBuffers[] = {vertexBuffer};
+            VkBuffer     vertexBuffers[] = {model.vertexBuffer};
             VkDeviceSize offsets[]       = {0};
             vkCmdBindVertexBuffers(commandBuffers[i], 0, 1, vertexBuffers, offsets);
 
             // you can only have a single index buffer. It's unfortunately not possible to use different indices for each
             // vertex attribute, so we do still have to completely duplicate vertex data even if just one attribute varies.
-            vkCmdBindIndexBuffer(commandBuffers[i], indexBuffer, 0, VK_INDEX_TYPE_UINT32);
+            vkCmdBindIndexBuffer(commandBuffers[i], model.indexBuffer, 0, VK_INDEX_TYPE_UINT32);
 
             vkCmdBindDescriptorSets(commandBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 0, 1,
                                     &descriptorSets[i], 0, nullptr);
 
             // OLD call before we indexed vertices
             // vkCmdDraw(commandBuffers[i], static_cast<uint32_t>(vertices.size()), 1, 0, 0);
-            vkCmdDrawIndexed(commandBuffers[i], static_cast<uint32_t>(indices.size()), 1, 0, 0, 0);
+            vkCmdDrawIndexed(commandBuffers[i], static_cast<uint32_t>(model.indices.size()), 1, 0, 0, 0);
 
             vkCmdEndRenderPass(commandBuffers[i]);
 
@@ -2591,6 +2541,12 @@ class VulkanApplication
         vkUnmapMemory(device, uniformBuffersMemory[currentImage]);
     }
 
+    void recreateCommandBuffer()
+    {
+        vkFreeCommandBuffers(device, commandPool, static_cast<uint32_t>(commandBuffers.size()), commandBuffers.data());
+        createCommandBuffers();
+    }
+
     void cleanupSwapChain()
     {
         vkDestroyImageView(device, colorImageView, nullptr);
@@ -2606,7 +2562,11 @@ class VulkanApplication
             vkDestroyFramebuffer(device, swapChainFramebuffers[i], nullptr);
         }
 
-        vkFreeCommandBuffers(device, commandPool, static_cast<uint32_t>(commandBuffers.size()), commandBuffers.data());
+        for (auto i = 0; i < renderGroups.size(); i++)
+        {
+            vkFreeCommandBuffers(*renderGroups[i].device, *renderGroups[i].commandPool,
+                                 static_cast<uint32_t>(commandBuffers.size()), commandBuffers.data());
+        }
 
         vkDestroyPipeline(device, graphicsPipeline, nullptr);
         vkDestroyPipelineLayout(device, pipelineLayout, nullptr);
@@ -2633,18 +2593,18 @@ class VulkanApplication
         cleanupSwapChain();
 
         vkDestroySampler(device, textureSampler, nullptr);
-        vkDestroyImageView(device, textureImageView, nullptr);
 
-        vkDestroyImage(device, textureImage, nullptr);
-        vkFreeMemory(device, textureImageMemory, nullptr);
+        // basically if it has an exception, I want these to be cleaned up, in all other situations I want it done here at
+        // this time
+        for (auto i = 0; i < renderGroups.size(); i++)
+        {
+            for (auto i = 0; i < renderGroups[i].models.size(); i++)
+            {
+                renderGroups[i].models[i].~Model();
+            }
+        }
 
         vkDestroyDescriptorSetLayout(device, descriptorSetLayout, nullptr);
-
-        vkDestroyBuffer(device, indexBuffer, nullptr);
-        vkFreeMemory(device, indexBufferMemory, nullptr);
-
-        vkDestroyBuffer(device, vertexBuffer, nullptr);
-        vkFreeMemory(device, vertexBufferMemory, nullptr);  // used by buffer, deleted after it
 
         for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++)
         {
@@ -2681,10 +2641,12 @@ class VulkanApplication
     {
         try
         {
-            initLog("A:\\Development\\Vulkan Project\\VulkanTest\\x64\\Debug");
-            initWindow();
-            initVulkan();
-            check_extensions();
+            if (deferred_init)
+            {
+                initWindow();
+                initVulkan();
+                check_extensions();
+            }
             mainLoop();
         }
         catch (const std::exception& e)
@@ -2695,6 +2657,60 @@ class VulkanApplication
         }
 
         cleanup();
+    }
+
+    VulkanApplication(Logger& graphicsLog, uint16_t window_width, uint16_t window_height, std::string window_title,
+                      bool fullscreen = false, bool deferred_init = false)
+        : graphicsLog(graphicsLog),
+          window_width(window_width),
+          window_height(window_height),
+          window_title(window_title),
+          deferred_init(deferred_init)
+    {
+        if (!deferred_init)
+        {
+            try
+            {
+                initWindow();
+                initVulkan();
+                check_extensions();
+            }
+            catch (const std::exception& e)
+            {
+                graphicsLog.Flush();
+                cleanup();
+                throw e;
+            }
+        }
+        // std::string title
+    }
+
+    void setFullScreen(bool value)
+    {
+        if (value)
+        {
+            glfwSetWindowMonitor(window, glfwGetPrimaryMonitor(), NULL, NULL, window_width, window_height, GLFW_DONT_CARE);
+        }
+        else
+        {
+            glfwSetWindowMonitor(window, nullptr, 0, 0, window_width, window_height, GLFW_DONT_CARE);
+        }
+
+        fullscreen = value;
+
+        // TODO: @MaxRobustness, this should be getting the window monitor instead of holding a boolean "fullscreen"
+        // Windowed mode windows can be made full screen by setting a monitor with glfwSetWindowMonitor, and full screen ones
+        // can be made windowed by unsetting it with the same function.
+        // glfwGetWindowMonitor
+    }
+
+    int CreateRenderGroup()
+    {
+        int index = renderGroups.size();
+        renderGroups.push_back(RenderGroup());
+        renderGroups[index].device      = &device;
+        renderGroups[index].commandPool = &commandPool;
+        return index;
     }
 };
 
@@ -2952,4 +2968,13 @@ class VulkanApplication
 //
 // *************************************************************************************************************************
 //
+// Using indirect drawing you can generate the draw commands offline ahead of time on the CPU and even update them using
+// shaders (as they're stored in a device local buffer). This adds lots of new possibilites to update draw commands without
+// the CPU being involved, including GPU-based culling.
 //
+// *************************************************************************************************************************
+//
+//
+
+// TODO: @MaxVulkanTip, CommandPools are more or less allocators for commandBuffers in GPU memory, these allocators have no
+// synchronization (like malloc does) and therefore having one per frame is not a bad idea
