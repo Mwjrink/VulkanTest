@@ -101,6 +101,8 @@ struct SwapChainSupportDetails
     std::vector<VkPresentModeKHR>   presentModes;
 };
 
+// TODO: @MaxCompleteAPI, multiply these together CPU side so the same operation isnt performed by every vertex in a model
+
 // Vulkan expects this to be aligned a certain way (see footnote)
 // Scalars have to be aligned by N (= 4 bytes given 32 bit floats).
 // A vec2 must be aligned by 2N (= 8 bytes)
@@ -183,8 +185,6 @@ class VulkanApplication
     std::vector<VkFramebuffer> swapChainFramebuffers;
 
     VkCommandPool commandPool;
-
-    std::vector<VkCommandBuffer> commandBuffers;
 
     std::vector<VkSemaphore> imageAvailableSemaphores;
     std::vector<VkSemaphore> renderFinishedSemaphores;
@@ -363,7 +363,14 @@ class VulkanApplication
 
     void GenerateCommandBuffers(int renderGroupIndex)
     {
-        renderGroups[renderGroupIndex].;
+        if (renderGroups[renderGroupIndex].models.size() == 0) return;
+
+        vkFreeCommandBuffers(*renderGroups[renderGroupIndex].device, *renderGroups[renderGroupIndex].commandPool,
+                             renderGroups[renderGroupIndex].commandBuffers.size(),
+                             renderGroups[renderGroupIndex].commandBuffers.data());
+
+        createCommandBuffers();
+        renderGroups[renderGroupIndex].commandBuffers;
         //
     }
 
@@ -1315,6 +1322,169 @@ class VulkanApplication
             vkCmdEndRenderPass(commandBuffers[i]);
 
             result = vkEndCommandBuffer(commandBuffers[i]);
+            throwOnError(result, "failed to record command buffer!");
+        }
+    }
+
+    void createCommandBuffers(int rgIndex)
+    {
+        renderGroups[rgIndex].commandBuffers.resize(swapChainFramebuffers.size());
+
+        VkCommandBufferAllocateInfo allocInfo = {};
+        allocInfo.sType                       = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+        allocInfo.commandPool                 = commandPool;
+
+        // The level parameter specifies if the allocated command buffers are primary or secondary command buffers.
+        // VK_COMMAND_BUFFER_LEVEL_PRIMARY:   // Can be submitted to a queue for execution, but cannot be called from
+        // other
+        //									  // command buffers.
+        // VK_COMMAND_BUFFER_LEVEL_SECONDARY: // Cannot be submitted directly, but can be called from primary command
+        //									  // buffers.
+        allocInfo.level              = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+        allocInfo.commandBufferCount = (uint32_t)renderGroups[rgIndex].commandBuffers.size();
+
+        auto result = vkAllocateCommandBuffers(device, &allocInfo, renderGroups[rgIndex].commandBuffers.data());
+        throwOnError(result, "failed to allocate command buffers!");
+
+        for (size_t i = 0; i < renderGroups[rgIndex].commandBuffers.size(); i++)
+        {
+            VkCommandBufferBeginInfo beginInfo = {};
+            beginInfo.sType                    = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+
+            // The flags parameter specifies how we're going to use the command buffer. The following values are
+            // available:
+
+            // VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT:		 // The command buffer will be rerecorded right after
+            //													 // executing it once.
+            // VK_COMMAND_BUFFER_USAGE_RENDER_PASS_CONTINUE_BIT: // This is a secondary command buffer that will be
+            // entirely
+            //													 // within a single render pass.
+            // VK_COMMAND_BUFFER_USAGE_SIMULTANEOUS_USE_BIT:	 // The command buffer can be resubmitted while it is
+            // also
+            //													 // already pending execution.
+            beginInfo.flags = 0;  // Optional
+
+            // The pInheritanceInfo parameter is only relevant for secondary command buffers. It specifies which state to
+            // inherit from the calling primary command buffers.
+            beginInfo.pInheritanceInfo = nullptr;  // Optional
+
+            auto result = vkBeginCommandBuffer(renderGroups[rgIndex].commandBuffers[i], &beginInfo);
+            throwOnError(result, "failed to begin recording command buffer!");
+
+            std::array<VkClearValue, 2> clearValues = {};
+            clearValues[0].color                    = {0.0f, 0.0f, 0.0f, 1.0f};
+            // set the clear value to the coordinate of the far plane
+            clearValues[1].depthStencil = {1.0f, 0};
+
+            VkRenderPassBeginInfo renderPassInfo = {};
+            renderPassInfo.sType                 = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+            renderPassInfo.renderPass            = renderPass;
+            renderPassInfo.framebuffer           = swapChainFramebuffers[i];
+
+            renderPassInfo.renderArea.offset = {0, 0};
+            renderPassInfo.renderArea.extent = swapChainExtent;
+
+            renderPassInfo.clearValueCount = static_cast<uint32_t>(clearValues.size());
+            renderPassInfo.pClearValues    = clearValues.data();
+
+            vkCmdBeginRenderPass(renderGroups[rgIndex].commandBuffers[i], &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
+
+            vkCmdBindPipeline(renderGroups[rgIndex].commandBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, graphicsPipeline);
+
+            VkBuffer     vertexBuffers[] = {renderGroups[rgIndex].vertexBuffer};
+            VkDeviceSize offsets[]       = {0};
+            vkCmdBindVertexBuffers(renderGroups[rgIndex].commandBuffers[i], 0, 1, vertexBuffers, offsets);
+
+            // you can only have a single index buffer. It's unfortunately not possible to use different indices for each
+            // vertex attribute, so we do still have to completely duplicate vertex data even if just one attribute varies.
+            vkCmdBindIndexBuffer(renderGroups[rgIndex].commandBuffers[i], renderGroups[rgIndex].indexBuffer, 0,
+                                 VK_INDEX_TYPE_UINT32);
+
+            vkCmdBindDescriptorSets(renderGroups[rgIndex].commandBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout,
+                                    0, 1, &descriptorSets[i], 0, nullptr);
+
+            // OLD call before we indexed vertices
+            // vkCmdDraw(commandBuffers[i], static_cast<uint32_t>(vertices.size()), 1, 0, 0);
+            vkCmdDrawIndexed(renderGroups[rgIndex].commandBuffers[i], static_cast<uint32_t>(indices.size()), 1, 0, 0, 0);
+
+            //
+            //
+            //
+            //
+            //
+            //
+            //
+            //
+
+            std::vector<VkDrawIndexedIndirectCommand> drawCommandParameters;
+            int                                       currentIndicesOffset = 0;
+            // int                                       currentVerticesOffset = 0;
+            for (auto i = 0; i < renderGroups[rgIndex].models.size(); i++)
+            {
+                drawCommandParameters.push_back({});
+                drawCommandParameters[i].indexCount    = renderGroups[rgIndex].models[i].indices.size();
+                drawCommandParameters[i].instanceCount = 1;                     // TODO
+                drawCommandParameters[i].firstIndex    = currentIndicesOffset;  // TODO
+                drawCommandParameters[i].vertexOffset  = 0;                     // Pretty sure this is 0
+                drawCommandParameters[i].firstInstance = 0;                     // Pretty sure this is 0
+
+                currentIndicesOffset += renderGroups[rgIndex].models[i].indices.size();
+            }
+
+            //
+            //
+            //
+            //
+            //
+
+            // Upload the drawCommandParameters
+            VkBuffer       drawCommandsBuffer;
+            VkDeviceMemory drawCommandsBufferMemory;
+
+            VkDeviceSize bufferSize = sizeof(VkDrawIndexedIndirectCommand) * drawCommandParameters.size();
+
+            VkBuffer       stagingBuffer;
+            VkDeviceMemory stagingBufferMemory;
+            createBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+                         VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, stagingBuffer,
+                         stagingBufferMemory);
+
+            void* data;
+            vkMapMemory(device, stagingBufferMemory, 0, bufferSize, 0, &data);
+            memcpy(data, drawCommandParameters.data(), (size_t)bufferSize);
+            vkUnmapMemory(device, stagingBufferMemory);
+
+            // TODO: USE A STAGING BUFFER, method to use staging buffer and copy this stuff
+            createBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT,
+                         VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, drawCommandsBuffer, drawCommandsBufferMemory);
+
+            buffercpy(stagingBuffer, drawCommandsBuffer, bufferSize);
+
+            vkDestroyBuffer(device, stagingBuffer, nullptr);
+            vkFreeMemory(device, stagingBufferMemory, nullptr);
+
+            //
+            //
+            //
+            //
+            //
+
+            // TODO: not sure if sizeof is right once the data is uploaded to the buffer, likely but...
+            vkCmdDrawIndexedIndirect(renderGroups[rgIndex].commandBuffers[i], drawCommandsBuffer, 0,
+                                     drawCommandParameters.size(), sizeof(VkDrawIndexedIndirectCommand));
+
+            //
+            //
+            //
+            //
+            //
+            //
+            //
+            //
+
+            vkCmdEndRenderPass(renderGroups[rgIndex].commandBuffers[i]);
+
+            result = vkEndCommandBuffer(renderGroups[rgIndex].commandBuffers[i]);
             throwOnError(result, "failed to record command buffer!");
         }
     }

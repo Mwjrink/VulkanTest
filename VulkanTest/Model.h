@@ -20,11 +20,11 @@ class Model
     VkBuffer       indexBuffer;
     VkDeviceMemory indexBufferMemory;
 
-	// how the fuck is this handled?
+    // how the fuck is this handled?
     VkImage        textureImage;
     VkDeviceMemory textureImageMemory;
     VkImageView    textureImageView;
-	// ...
+    // ...
 
     // TODO: @MaxCompleteAPI, this likely shouldn't be here and if it needs to be it should be dumped after loading
     // put this as a temp variable in loading then dump it once uploaded?
@@ -73,6 +73,17 @@ class RenderGroup
     VkDevice*                    device;
     VkCommandPool* commandPool;  // this can change based on which thread calls rebuildCommandBuffers as this is essentially
                                  // a per thread allocator for GPU memory and commandBuffers
+
+    bool dynamic = false;  // rebuilt often
+
+    VkBuffer       vertexBuffer;
+    VkDeviceMemory vertexBufferMemory;
+    VkBuffer       indexBuffer;
+    VkDeviceMemory indexBufferMemory;
+
+    VkImage        textureImage;
+    VkDeviceMemory textureImageMemory;
+    VkImageView    textureImageView;
 
     // bool share_sampler;
     // std::vector<VkSampler> textureSamplers; // either 1, or size of models
