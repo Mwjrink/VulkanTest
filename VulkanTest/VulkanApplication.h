@@ -117,6 +117,13 @@ struct UniformBufferObject
     alignas(16) glm::mat4 proj;
 };
 
+struct InstanceData
+{
+    // being explicit about the alignment, though this is not necessarily necessary
+    alignas(16) glm::mat4 projViewModel;
+    alignas(4) int textureIndex;
+};
+
 static std::vector<char> readFile(const std::string& filename)
 {
     // We start by opening the file with two flags:
@@ -221,6 +228,9 @@ class VulkanApplication
     bool framebufferResized = false;
 
     std::vector<RenderGroup> renderGroups;
+
+    glm::mat4 _view;
+    glm::mat4 _proj;
 
     // cant seem to find the macro for this
     const std::vector<const char*> validationLayers = {"VK_LAYER_KHRONOS_validation", "VK_LAYER_LUNARG_monitor",
@@ -372,23 +382,6 @@ class VulkanApplication
         createCommandBuffers();
         renderGroups[renderGroupIndex].commandBuffers;
         //
-    }
-
-    void loadModel(int renderGroupIndex, std::string mesh_path, std::string texture_path)
-    {
-        // TODO: @MaxCompleteAPI, add debug only or optional checks for index within bounds of vector
-        int index = renderGroups[renderGroupIndex].models.size();
-        renderGroups[renderGroupIndex].models.push_back(Model());
-        auto model = &renderGroups[renderGroupIndex].models[index];
-
-        model->device       = &device;
-        model->mesh_path    = mesh_path;
-        model->texture_path = texture_path;
-
-        loadMesh(*model);
-
-        createTextureImage(*model);
-        createTextureImageView(*model);
     }
 
     void loadMesh(Model& model)
@@ -1207,7 +1200,10 @@ class VulkanApplication
         //
         //
         //
-        createCommandBuffers();
+        for (auto i = 0; i < renderGroups.size(); i++)
+        {
+            recreateCommandBuffers(i);
+        }
         //
         //
         //
@@ -1239,92 +1235,92 @@ class VulkanApplication
         }
     }
 
-    void createCommandBuffers()
-    {
-        commandBuffers.resize(swapChainFramebuffers.size());
-
-        VkCommandBufferAllocateInfo allocInfo = {};
-        allocInfo.sType                       = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
-        allocInfo.commandPool                 = commandPool;
-
-        // The level parameter specifies if the allocated command buffers are primary or secondary command buffers.
-        // VK_COMMAND_BUFFER_LEVEL_PRIMARY:   // Can be submitted to a queue for execution, but cannot be called from
-        // other
-        //									  // command buffers.
-        // VK_COMMAND_BUFFER_LEVEL_SECONDARY: // Cannot be submitted directly, but can be called from primary command
-        //									  // buffers.
-        allocInfo.level              = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-        allocInfo.commandBufferCount = (uint32_t)commandBuffers.size();
-
-        auto result = vkAllocateCommandBuffers(device, &allocInfo, commandBuffers.data());
-        throwOnError(result, "failed to allocate command buffers!");
-
-        for (size_t i = 0; i < commandBuffers.size(); i++)
-        {
-            VkCommandBufferBeginInfo beginInfo = {};
-            beginInfo.sType                    = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
-
-            // The flags parameter specifies how we're going to use the command buffer. The following values are
-            // available:
-
-            // VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT:		 // The command buffer will be rerecorded right after
-            //													 // executing it once.
-            // VK_COMMAND_BUFFER_USAGE_RENDER_PASS_CONTINUE_BIT: // This is a secondary command buffer that will be
-            // entirely
-            //													 // within a single render pass.
-            // VK_COMMAND_BUFFER_USAGE_SIMULTANEOUS_USE_BIT:	 // The command buffer can be resubmitted while it is
-            // also
-            //													 // already pending execution.
-            beginInfo.flags = 0;  // Optional
-
-            // The pInheritanceInfo parameter is only relevant for secondary command buffers. It specifies which state to
-            // inherit from the calling primary command buffers.
-            beginInfo.pInheritanceInfo = nullptr;  // Optional
-
-            auto result = vkBeginCommandBuffer(commandBuffers[i], &beginInfo);
-            throwOnError(result, "failed to begin recording command buffer!");
-
-            std::array<VkClearValue, 2> clearValues = {};
-            clearValues[0].color                    = {0.0f, 0.0f, 0.0f, 1.0f};
-            // set the clear value to the coordinate of the far plane
-            clearValues[1].depthStencil = {1.0f, 0};
-
-            VkRenderPassBeginInfo renderPassInfo = {};
-            renderPassInfo.sType                 = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
-            renderPassInfo.renderPass            = renderPass;
-            renderPassInfo.framebuffer           = swapChainFramebuffers[i];
-
-            renderPassInfo.renderArea.offset = {0, 0};
-            renderPassInfo.renderArea.extent = swapChainExtent;
-
-            renderPassInfo.clearValueCount = static_cast<uint32_t>(clearValues.size());
-            renderPassInfo.pClearValues    = clearValues.data();
-
-            vkCmdBeginRenderPass(commandBuffers[i], &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
-
-            vkCmdBindPipeline(commandBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, graphicsPipeline);
-
-            VkBuffer     vertexBuffers[] = {model.vertexBuffer};
-            VkDeviceSize offsets[]       = {0};
-            vkCmdBindVertexBuffers(commandBuffers[i], 0, 1, vertexBuffers, offsets);
-
-            // you can only have a single index buffer. It's unfortunately not possible to use different indices for each
-            // vertex attribute, so we do still have to completely duplicate vertex data even if just one attribute varies.
-            vkCmdBindIndexBuffer(commandBuffers[i], model.indexBuffer, 0, VK_INDEX_TYPE_UINT32);
-
-            vkCmdBindDescriptorSets(commandBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 0, 1,
-                                    &descriptorSets[i], 0, nullptr);
-
-            // OLD call before we indexed vertices
-            // vkCmdDraw(commandBuffers[i], static_cast<uint32_t>(vertices.size()), 1, 0, 0);
-            vkCmdDrawIndexed(commandBuffers[i], static_cast<uint32_t>(model.indices.size()), 1, 0, 0, 0);
-
-            vkCmdEndRenderPass(commandBuffers[i]);
-
-            result = vkEndCommandBuffer(commandBuffers[i]);
-            throwOnError(result, "failed to record command buffer!");
-        }
-    }
+    // void createCommandBuffers()
+    //{
+    //    commandBuffers.resize(swapChainFramebuffers.size());
+    //
+    //    VkCommandBufferAllocateInfo allocInfo = {};
+    //    allocInfo.sType                       = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+    //    allocInfo.commandPool                 = commandPool;
+    //
+    //    // The level parameter specifies if the allocated command buffers are primary or secondary command buffers.
+    //    // VK_COMMAND_BUFFER_LEVEL_PRIMARY:   // Can be submitted to a queue for execution, but cannot be called from
+    //    // other
+    //    //									  // command buffers.
+    //    // VK_COMMAND_BUFFER_LEVEL_SECONDARY: // Cannot be submitted directly, but can be called from primary command
+    //    //									  // buffers.
+    //    allocInfo.level              = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+    //    allocInfo.commandBufferCount = (uint32_t)commandBuffers.size();
+    //
+    //    auto result = vkAllocateCommandBuffers(device, &allocInfo, commandBuffers.data());
+    //    throwOnError(result, "failed to allocate command buffers!");
+    //
+    //    for (size_t i = 0; i < commandBuffers.size(); i++)
+    //    {
+    //        VkCommandBufferBeginInfo beginInfo = {};
+    //        beginInfo.sType                    = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+    //
+    //        // The flags parameter specifies how we're going to use the command buffer. The following values are
+    //        // available:
+    //
+    //        // VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT:		 // The command buffer will be rerecorded right after
+    //        //													 // executing it once.
+    //        // VK_COMMAND_BUFFER_USAGE_RENDER_PASS_CONTINUE_BIT: // This is a secondary command buffer that will be
+    //        // entirely
+    //        //													 // within a single render pass.
+    //        // VK_COMMAND_BUFFER_USAGE_SIMULTANEOUS_USE_BIT:	 // The command buffer can be resubmitted while it is
+    //        // also
+    //        //													 // already pending execution.
+    //        beginInfo.flags = 0;  // Optional
+    //
+    //        // The pInheritanceInfo parameter is only relevant for secondary command buffers. It specifies which state to
+    //        // inherit from the calling primary command buffers.
+    //        beginInfo.pInheritanceInfo = nullptr;  // Optional
+    //
+    //        auto result = vkBeginCommandBuffer(commandBuffers[i], &beginInfo);
+    //        throwOnError(result, "failed to begin recording command buffer!");
+    //
+    //        std::array<VkClearValue, 2> clearValues = {};
+    //        clearValues[0].color                    = {0.0f, 0.0f, 0.0f, 1.0f};
+    //        // set the clear value to the coordinate of the far plane
+    //        clearValues[1].depthStencil = {1.0f, 0};
+    //
+    //        VkRenderPassBeginInfo renderPassInfo = {};
+    //        renderPassInfo.sType                 = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+    //        renderPassInfo.renderPass            = renderPass;
+    //        renderPassInfo.framebuffer           = swapChainFramebuffers[i];
+    //
+    //        renderPassInfo.renderArea.offset = {0, 0};
+    //        renderPassInfo.renderArea.extent = swapChainExtent;
+    //
+    //        renderPassInfo.clearValueCount = static_cast<uint32_t>(clearValues.size());
+    //        renderPassInfo.pClearValues    = clearValues.data();
+    //
+    //        vkCmdBeginRenderPass(commandBuffers[i], &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
+    //
+    //        vkCmdBindPipeline(commandBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, graphicsPipeline);
+    //
+    //        VkBuffer     vertexBuffers[] = {model.vertexBuffer};
+    //        VkDeviceSize offsets[]       = {0};
+    //        vkCmdBindVertexBuffers(commandBuffers[i], 0, 1, vertexBuffers, offsets);
+    //
+    //        // you can only have a single index buffer. It's unfortunately not possible to use different indices for each
+    //        // vertex attribute, so we do still have to completely duplicate vertex data even if just one attribute varies.
+    //        vkCmdBindIndexBuffer(commandBuffers[i], model.indexBuffer, 0, VK_INDEX_TYPE_UINT32);
+    //
+    //        vkCmdBindDescriptorSets(commandBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 0, 1,
+    //                                &descriptorSets[i], 0, nullptr);
+    //
+    //        // OLD call before we indexed vertices
+    //        // vkCmdDraw(commandBuffers[i], static_cast<uint32_t>(vertices.size()), 1, 0, 0);
+    //        vkCmdDrawIndexed(commandBuffers[i], static_cast<uint32_t>(model.indices.size()), 1, 0, 0, 0);
+    //
+    //        vkCmdEndRenderPass(commandBuffers[i]);
+    //
+    //        result = vkEndCommandBuffer(commandBuffers[i]);
+    //        throwOnError(result, "failed to record command buffer!");
+    //    }
+    //}
 
     void createCommandBuffers(int rgIndex)
     {
@@ -1332,12 +1328,11 @@ class VulkanApplication
 
         VkCommandBufferAllocateInfo allocInfo = {};
         allocInfo.sType                       = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
-        allocInfo.commandPool                 = commandPool;
+        allocInfo.commandPool                 = *renderGroups[rgIndex].commandPool;
 
         // The level parameter specifies if the allocated command buffers are primary or secondary command buffers.
         // VK_COMMAND_BUFFER_LEVEL_PRIMARY:   // Can be submitted to a queue for execution, but cannot be called from
-        // other
-        //									  // command buffers.
+        //									  // other command buffers.
         // VK_COMMAND_BUFFER_LEVEL_SECONDARY: // Cannot be submitted directly, but can be called from primary command
         //									  // buffers.
         allocInfo.level              = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
@@ -1346,48 +1341,51 @@ class VulkanApplication
         auto result = vkAllocateCommandBuffers(device, &allocInfo, renderGroups[rgIndex].commandBuffers.data());
         throwOnError(result, "failed to allocate command buffers!");
 
+        VkCommandBufferBeginInfo beginInfo = {};
+        beginInfo.sType                    = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+
+        // The flags parameter specifies how we're going to use the command buffer. The following values are
+        // available:
+        //
+        // VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT:		 // The command buffer will be rerecorded right after
+        //													 // executing it once.
+        // VK_COMMAND_BUFFER_USAGE_RENDER_PASS_CONTINUE_BIT: // This is a secondary command buffer that will be
+        //													 // entirely within a single render pass.
+        // VK_COMMAND_BUFFER_USAGE_SIMULTANEOUS_USE_BIT:	 // The command buffer can be resubmitted while it is
+        //													 // also already pending execution.
+        beginInfo.flags = 0;  // Optional
+
+        // The pInheritanceInfo parameter is only relevant for secondary command buffers. It specifies which state to
+        // inherit from the calling primary command buffers.
+        beginInfo.pInheritanceInfo = nullptr;  // Optional
+
+        std::array<VkClearValue, 2> clearValues = {};
+        clearValues[0].color                    = {0.0f, 0.0f, 0.0f, 1.0f};
+        // set the clear value to the coordinate of the far plane
+        clearValues[1].depthStencil = {1.0f, 0};
+
+        VkRenderPassBeginInfo renderPassInfo = {};
+        renderPassInfo.sType                 = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+        renderPassInfo.renderPass            = renderPass;
+        // renderPassInfo.framebuffer           = swapChainFramebuffers[i];
+
+        renderPassInfo.renderArea.offset = {0, 0};
+        renderPassInfo.renderArea.extent = swapChainExtent;
+
+        renderPassInfo.clearValueCount = static_cast<uint32_t>(clearValues.size());
+        renderPassInfo.pClearValues    = clearValues.data();
+
         for (size_t i = 0; i < renderGroups[rgIndex].commandBuffers.size(); i++)
         {
-            VkCommandBufferBeginInfo beginInfo = {};
-            beginInfo.sType                    = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
-
-            // The flags parameter specifies how we're going to use the command buffer. The following values are
-            // available:
-
-            // VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT:		 // The command buffer will be rerecorded right after
-            //													 // executing it once.
-            // VK_COMMAND_BUFFER_USAGE_RENDER_PASS_CONTINUE_BIT: // This is a secondary command buffer that will be
-            // entirely
-            //													 // within a single render pass.
-            // VK_COMMAND_BUFFER_USAGE_SIMULTANEOUS_USE_BIT:	 // The command buffer can be resubmitted while it is
-            // also
-            //													 // already pending execution.
-            beginInfo.flags = 0;  // Optional
-
-            // The pInheritanceInfo parameter is only relevant for secondary command buffers. It specifies which state to
-            // inherit from the calling primary command buffers.
-            beginInfo.pInheritanceInfo = nullptr;  // Optional
-
             auto result = vkBeginCommandBuffer(renderGroups[rgIndex].commandBuffers[i], &beginInfo);
             throwOnError(result, "failed to begin recording command buffer!");
 
-            std::array<VkClearValue, 2> clearValues = {};
-            clearValues[0].color                    = {0.0f, 0.0f, 0.0f, 1.0f};
-            // set the clear value to the coordinate of the far plane
-            clearValues[1].depthStencil = {1.0f, 0};
-
-            VkRenderPassBeginInfo renderPassInfo = {};
-            renderPassInfo.sType                 = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
-            renderPassInfo.renderPass            = renderPass;
-            renderPassInfo.framebuffer           = swapChainFramebuffers[i];
-
-            renderPassInfo.renderArea.offset = {0, 0};
-            renderPassInfo.renderArea.extent = swapChainExtent;
-
-            renderPassInfo.clearValueCount = static_cast<uint32_t>(clearValues.size());
-            renderPassInfo.pClearValues    = clearValues.data();
+            renderPassInfo.framebuffer = swapChainFramebuffers[i];
 
             vkCmdBeginRenderPass(renderGroups[rgIndex].commandBuffers[i], &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
+
+            vkCmdBindDescriptorSets(renderGroups[rgIndex].commandBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout,
+                                    0, 1, &descriptorSets[i], 0, nullptr);
 
             vkCmdBindPipeline(renderGroups[rgIndex].commandBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, graphicsPipeline);
 
@@ -1400,12 +1398,9 @@ class VulkanApplication
             vkCmdBindIndexBuffer(renderGroups[rgIndex].commandBuffers[i], renderGroups[rgIndex].indexBuffer, 0,
                                  VK_INDEX_TYPE_UINT32);
 
-            vkCmdBindDescriptorSets(renderGroups[rgIndex].commandBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout,
-                                    0, 1, &descriptorSets[i], 0, nullptr);
-
             // OLD call before we indexed vertices
             // vkCmdDraw(commandBuffers[i], static_cast<uint32_t>(vertices.size()), 1, 0, 0);
-            vkCmdDrawIndexed(renderGroups[rgIndex].commandBuffers[i], static_cast<uint32_t>(indices.size()), 1, 0, 0, 0);
+            // vkCmdDrawIndexed(renderGroups[rgIndex].commandBuffers[i], static_cast<uint32_t>(indices.size()), 1, 0, 0, 0);
 
             //
             //
@@ -1417,18 +1412,23 @@ class VulkanApplication
             //
 
             std::vector<VkDrawIndexedIndirectCommand> drawCommandParameters;
-            int                                       currentIndicesOffset = 0;
-            // int                                       currentVerticesOffset = 0;
+            int                                       currentIndicesOffset  = 0;
+            int                                       currentVerticesOffset = 0;
+            int                                       instances             = 0;
             for (auto i = 0; i < renderGroups[rgIndex].models.size(); i++)
             {
+                int a = 1;
+
                 drawCommandParameters.push_back({});
                 drawCommandParameters[i].indexCount    = renderGroups[rgIndex].models[i].indices.size();
-                drawCommandParameters[i].instanceCount = 1;                     // TODO
-                drawCommandParameters[i].firstIndex    = currentIndicesOffset;  // TODO
-                drawCommandParameters[i].vertexOffset  = 0;                     // Pretty sure this is 0
-                drawCommandParameters[i].firstInstance = 0;                     // Pretty sure this is 0
+                drawCommandParameters[i].instanceCount = a;  // TODO: need to have some way to set this
+                drawCommandParameters[i].firstIndex    = currentIndicesOffset;
+                drawCommandParameters[i].vertexOffset  = currentVerticesOffset;
+                drawCommandParameters[i].firstInstance = i * instances;  // Pretty sure this is 0
 
                 currentIndicesOffset += renderGroups[rgIndex].models[i].indices.size();
+                currentVerticesOffset += renderGroups[rgIndex].models[i].vertices.size();
+                instances += a;
             }
 
             //
@@ -1469,7 +1469,6 @@ class VulkanApplication
             //
             //
 
-            // TODO: not sure if sizeof is right once the data is uploaded to the buffer, likely but...
             vkCmdDrawIndexedIndirect(renderGroups[rgIndex].commandBuffers[i], drawCommandsBuffer, 0,
                                      drawCommandParameters.size(), sizeof(VkDrawIndexedIndirectCommand));
 
@@ -2630,6 +2629,11 @@ class VulkanApplication
 
         updateUniformBuffer(imageIndex);
 
+        for (auto i = 0; i < renderGroups.size(); i++)
+        {
+            updateInstanceDataBuffer(i, imageIndex);
+        }
+
         VkSubmitInfo submitInfo = {};
         submitInfo.sType        = VK_STRUCTURE_TYPE_SUBMIT_INFO;
 
@@ -2639,7 +2643,14 @@ class VulkanApplication
         submitInfo.pWaitSemaphores            = waitSemaphores;
         submitInfo.pWaitDstStageMask          = waitStages;
 
-        submitInfo.commandBufferCount = 1;
+        // TODO: @MaxCompleteAPI,
+        std::vector<VkCommandBuffer> commandBuffers;
+        for (auto i = 0; i < renderGroups.size(); i++)
+        {
+            commandBuffers.push_back(renderGroups[i].commandBuffers[imageIndex]);
+        }
+
+        submitInfo.commandBufferCount = renderGroups.size();
         submitInfo.pCommandBuffers    = &commandBuffers[imageIndex];
 
         VkSemaphore signalSemaphores[]  = {renderFinishedSemaphores[currentFrame]};
@@ -2711,10 +2722,55 @@ class VulkanApplication
         vkUnmapMemory(device, uniformBuffersMemory[currentImage]);
     }
 
-    void recreateCommandBuffer()
+    void updateInstanceDataBuffer(int rgIndex, int imageIndex)
     {
-        vkFreeCommandBuffers(device, commandPool, static_cast<uint32_t>(commandBuffers.size()), commandBuffers.data());
-        createCommandBuffers();
+        std::vector<InstanceData> instanceData;
+        instanceData.resize(renderGroups[rgIndex].totalInstanceCount);
+
+        // TODO make this and all of its instances througout a global const
+        auto mat4None = glm::mat4(0.0f);
+        for (auto i = 0; i < renderGroups[rgIndex].models.size(); i++)
+        {
+            for (auto j = 0; j < renderGroups[rgIndex].models[i]._modelMatrices.size(); j++)
+            {
+                if (renderGroups[rgIndex].models[i]._modelMatrices[j] != mat4None)
+                {
+                    auto k = instanceData.size();
+                    instanceData.push_back({});
+                    instanceData[k].projViewModel = _proj * _view * renderGroups[rgIndex].models[i]._modelMatrices[j];
+                    instanceData[k].textureIndex  = i;
+                }
+            }
+        }
+
+        VkDeviceSize bufferSize = instanceData.size() * sizeof(InstanceData);
+
+        VkBuffer       stagingBuffer;
+        VkDeviceMemory stagingBufferMemory;
+        createBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+                     VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, stagingBuffer,
+                     stagingBufferMemory);
+
+        void* data;
+        vkMapMemory(device, stagingBufferMemory, 0, bufferSize, 0, &data);
+        memcpy(data, instanceData.data(), (size_t)bufferSize);
+        vkUnmapMemory(device, stagingBufferMemory);
+
+        createBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+                     VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, renderGroups[rgIndex].instanceDataBuffer[imageIndex],
+                     renderGroups[rgIndex].instanceDataBufferMemory[imageIndex]);
+
+        buffercpy(stagingBuffer, renderGroups[rgIndex].instanceDataBuffer[imageIndex], bufferSize);
+
+        vkDestroyBuffer(device, stagingBuffer, nullptr);
+        vkFreeMemory(device, stagingBufferMemory, nullptr);
+    }
+
+    void recreateCommandBuffers(int rgIndex)
+    {
+        vkFreeCommandBuffers(device, commandPool, static_cast<uint32_t>(renderGroups[rgIndex].commandBuffers.size()),
+                             renderGroups[rgIndex].commandBuffers.data());
+        createCommandBuffers(rgIndex);
     }
 
     void cleanupSwapChain()
@@ -2874,13 +2930,95 @@ class VulkanApplication
         // glfwGetWindowMonitor
     }
 
-    int CreateRenderGroup()
+    int createRenderGroup()
     {
         int index = renderGroups.size();
         renderGroups.push_back(RenderGroup());
         renderGroups[index].device      = &device;
         renderGroups[index].commandPool = &commandPool;
+        renderGroups[index].commandBuffers.resize(MAX_FRAMES_IN_FLIGHT);
+        renderGroups[index].instanceDataBuffer.resize(MAX_FRAMES_IN_FLIGHT);
+        renderGroups[index].instanceDataBufferMemory.resize(MAX_FRAMES_IN_FLIGHT);
         return index;
+    }
+
+    void setMatrices(glm::mat4 view, glm::mat4 proj)
+    {
+        _view = view;
+        _proj = proj;
+    }
+
+    int addModel(int renderGroupIndex, std::string mesh_path, std::string texture_path)
+    {
+        // TODO: @MaxCompleteAPI, add debug only or optional checks for index within bounds of vector
+        int index = renderGroups[renderGroupIndex].models.size();
+        renderGroups[renderGroupIndex].models.push_back(Model());
+        auto model = &renderGroups[renderGroupIndex].models[index];
+
+        model->device       = &device;
+        model->mesh_path    = mesh_path;
+        model->texture_path = texture_path;
+
+        loadMesh(*model);
+
+        createTextureImage(*model);
+        createTextureImageView(*model);
+
+        return index;
+    }
+
+    int addInstance(int rgIndex, int modelIndex, const glm::mat4& modelMatrix)
+    {
+        auto mat4None = glm::mat4(0.0f);
+        for (auto i = 0; i < renderGroups[rgIndex].models[modelIndex]._modelMatrices.size(); i++)
+        {
+            if (renderGroups[rgIndex].models[modelIndex]._modelMatrices[i] == mat4None)
+            {
+                renderGroups[rgIndex].models[modelIndex]._modelMatrices[i] = modelMatrix;
+                renderGroups[rgIndex].totalInstanceCount++;
+                return i;
+            }
+        }
+
+        auto index = renderGroups[rgIndex].models[modelIndex]._modelMatrices.size();
+        renderGroups[rgIndex].models[modelIndex]._modelMatrices.push_back(modelMatrix);
+        renderGroups[rgIndex].totalInstanceCount++;
+        return index;
+    }
+
+    std::vector<int> addInstances(int rgIndex, int modelIndex, const std::vector<glm::mat4>& modelMatrices)
+    {
+        auto             mat4None     = glm::mat4(0.0f);
+        auto             currentIndex = 0;
+        std::vector<int> indices;
+        for (auto i = 0; i < renderGroups[rgIndex].models[modelIndex]._modelMatrices.size(); i++)
+        {
+            if (renderGroups[rgIndex].models[modelIndex]._modelMatrices[i] == mat4None)
+            {
+                renderGroups[rgIndex].models[modelIndex]._modelMatrices[i] = modelMatrices[currentIndex];
+                // renderGroups[rgIndex].totalInstanceCount++;
+                indices.push_back(i);
+            }
+        }
+
+        renderGroups[rgIndex].models[modelIndex]._modelMatrices.insert(
+            renderGroups[rgIndex].models[modelIndex]._modelMatrices.end(), modelMatrices.begin() + currentIndex,
+            modelMatrices.end());
+
+        for (auto i = currentIndex; i < modelMatrices.size() - currentIndex; i++)
+        {
+            indices.push_back(i);
+        }
+
+        // renderGroups[rgIndex].totalInstanceCount += modelMatrices.size() - currentIndex;
+        renderGroups[rgIndex].totalInstanceCount += modelMatrices.size();
+        return indices;
+    }
+
+    void removeInstance(int rgIndex, int modelIndex, int instanceIndex)
+    {
+        renderGroups[rgIndex].models[modelIndex]._modelMatrices[instanceIndex] = glm::mat4(0.0f);
+        renderGroups[rgIndex].totalInstanceCount--;
     }
 };
 
