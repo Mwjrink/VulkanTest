@@ -39,7 +39,7 @@ int main()
 #elif __APPLE__
     // TODO: @MaxAppleSupport, get a proper path to log to
     // also add a date-timestamp to this
-    logPath = "/Users/maxrink/Development/Vulkan Project/VulkanTest";
+    file = "/Users/maxrink/Development/Vulkan Project/VulkanTest" + "graphics" + fileName + std::to_string(logNumber) + ".log";
 #endif
 
     std::ofstream graphicsLogFile;

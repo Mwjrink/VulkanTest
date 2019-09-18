@@ -26,9 +26,9 @@ class Model
     // VkDeviceMemory indexBufferMemory;
 
     // how the fuck is this handled?
-    // VkImage        textureImage;
-    // VkDeviceMemory textureImageMemory;
-    // VkImageView    textureImageView;
+    VkImage        textureImage;
+    VkDeviceMemory textureImageMemory;
+    VkImageView    textureImageView;
     // ...
 
     // TODO: @MaxCompleteAPI, this likely shouldn't be here and if it needs to be it should be dumped after loading
@@ -38,14 +38,19 @@ class Model
     //std::vector<uint32_t> indices;  // It is possible to use either uint16_t or uint32_t for your index buffer depending on
                                     // the number of entries in vertices. We can stick to uint16_t for now because we're
                                     // using less than 65535 unique vertices.
-    unsigned int verticesOffset;
-    unsigned int verticesCount;
-    unsigned int indicesOffset;
-    unsigned int indicesCount;
+    size_t verticesOffset;
+    size_t verticesCount;
+    size_t indicesOffset;
+    size_t indicesCount;
 
     std::vector<glm::mat4> _modelMatrices;
 
     bool cleaned_up = false;
+    
+    friend class VulkanApplication;
+    friend class RenderGroup;
+    
+  public:
     ~Model()
     {
         // TODO: @MaxConcurrency, make this a compareExchange???
@@ -66,9 +71,6 @@ class Model
             cleaned_up = true;
         }
     }
-
-    friend class VulkanApplication;
-    friend class RenderGroup;
 };
 
 class RenderGroup
@@ -101,15 +103,20 @@ class RenderGroup
 
     std::vector<VkBuffer>       instanceDataBuffer;
     std::vector<VkDeviceMemory> instanceDataBufferMemory;
+    
+    VkDescriptorSetLayout descriptorSetLayout;
 
-    VkImage        textureImage;
-    VkDeviceMemory textureImageMemory;
-    VkImageView    textureImageView;
+    // VkImage        textureImage;
+    // VkDeviceMemory textureImageMemory;
+    // VkImageView    textureImageView;
 
-    // bool share_sampler;
-    // std::vector<VkSampler> textureSamplers; // either 1, or size of models
+    VkSampler textureSampler;
 
     bool cleaned_up = false;
+    
+    friend class VulkanApplication;
+    
+  public:
     ~RenderGroup()
     {
         if (!cleaned_up)
@@ -124,8 +131,6 @@ class RenderGroup
             cleaned_up = true;
         }
     }
-
-    friend class VulkanApplication;
 };
 
 // TODO: @MaxCompleteAPI, rename private members to _variable and functions
