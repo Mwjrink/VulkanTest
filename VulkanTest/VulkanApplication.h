@@ -865,7 +865,8 @@ class VulkanApplication
             bufferInfo.offset                 = 0;
             bufferInfo.range                  = sizeof(UniformBufferObject);  // VK_WHOLE_SIZE
 
-            VkDescriptorImageInfo imageInfos[renderGroups[rgIndex].models.size()];
+            std::vector<VkDescriptorImageInfo> imageInfos;
+            imageInfos.resize(renderGroups[rgIndex].models.size());
             for(auto i=0; i< renderGroups[rgIndex].models.size(); i++){
                 imageInfos[i] = {};
                 imageInfos[i].imageLayout           = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
@@ -890,7 +891,7 @@ class VulkanApplication
             descriptorWrites[1].dstArrayElement = 0;
             descriptorWrites[1].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
             descriptorWrites[1].descriptorCount = (int)renderGroups[rgIndex].models.size();
-            descriptorWrites[1].pImageInfo      = imageInfos;
+            descriptorWrites[1].pImageInfo      = imageInfos.data();
 
             // descriptorWrite.pTexelBufferView = nullptr;  // Optional
 
