@@ -104,7 +104,11 @@ class RenderGroup
     std::vector<VkBuffer>       instanceDataBuffer;
     std::vector<VkDeviceMemory> instanceDataBufferMemory;
     
+    VkPipeline graphicsPipeline;
     VkDescriptorSetLayout descriptorSetLayout;
+    
+    VkDescriptorPool*            descriptorPool;
+    std::vector<VkDescriptorSet> descriptorSets;
 
     // VkImage        textureImage;
     // VkDeviceMemory textureImageMemory;

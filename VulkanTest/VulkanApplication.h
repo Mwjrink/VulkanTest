@@ -155,14 +155,15 @@ static std::vector<char> readFile(const std::string& filename)
 
 class VulkanApplication
 {
+  public:
+    GLFWwindow* window;
+    
   private:
     VkInstance instance;
 
     VkDebugUtilsMessengerEXT debugMessenger;
 
     VkSurfaceKHR surface;
-
-    GLFWwindow* window;
 
     std::ofstream graphicsLogFile;
     Logger        graphicsLog;
@@ -187,7 +188,7 @@ class VulkanApplication
     //VkDescriptorSetLayout descriptorSetLayout;
     VkPipelineLayout      pipelineLayout;
 
-    VkPipeline graphicsPipeline;
+    //VkPipeline graphicsPipeline;
 
     std::vector<VkFramebuffer> swapChainFramebuffers;
 
@@ -200,11 +201,11 @@ class VulkanApplication
 
     // We need multiple because we need one per in-flight frame (model/projection etc could (vast majority of cases) be
     // different every frame
-    std::vector<VkBuffer>       uniformBuffers;
-    std::vector<VkDeviceMemory> uniformBuffersMemory;
+    //std::vector<VkBuffer>       uniformBuffers;
+    //std::vector<VkDeviceMemory> uniformBuffersMemory;
 
     VkDescriptorPool             descriptorPool;
-    std::vector<VkDescriptorSet> descriptorSets;
+    //std::vector<VkDescriptorSet> descriptorSets;
 
     //VkSampler textureSampler;
 
@@ -215,6 +216,8 @@ class VulkanApplication
     VkImage        colorImage;
     VkDeviceMemory colorImageMemory;
     VkImageView    colorImageView;
+    
+    uint32_t swapChainIteration;
 
     VkSampleCountFlagBits msaaSamples = VK_SAMPLE_COUNT_1_BIT;
 
@@ -330,7 +333,17 @@ class VulkanApplication
         createImageViews();
         createRenderPass();
         //createDescriptorSetLayout();
-        createGraphicsPipeline();
+        //
+        //
+        //
+        //
+        //
+        // createGraphicsPipeline();
+        //
+        //
+        //
+        //
+        //
         createCommandPool();
         createColorResources();
         createDepthResources();
@@ -853,9 +866,9 @@ class VulkanApplication
         allocInfo.descriptorSetCount                 = static_cast<uint32_t>(swapChainImages.size());
         allocInfo.pSetLayouts                        = layouts.data();
 
-        descriptorSets.resize(swapChainImages.size());
+        renderGroupsd[rgIndex].descriptorSets.resize(swapChainImages.size());
 
-        auto result = vkAllocateDescriptorSets(device, &allocInfo, descriptorSets.data());
+        auto result = vkAllocateDescriptorSets(device, &allocInfo, renderGroupsd[rgIndex].descriptorSets.data());
         throwOnError(result, "failed to allocate descriptor sets!");
 
         for (size_t i = 0; i < swapChainImages.size(); i++)
@@ -878,7 +891,7 @@ class VulkanApplication
 
             // TODO: @MaxASAPCurrent, this probably needs to be bound to instance data not this
             descriptorWrites[0].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-            descriptorWrites[0].dstSet          = descriptorSets[i];
+            descriptorWrites[0].dstSet          = renderGroupsd[rgIndex].descriptorSets[i];
             descriptorWrites[0].dstBinding      = 0;
             descriptorWrites[0].dstArrayElement = 0;
             descriptorWrites[0].descriptorType  = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
@@ -886,7 +899,7 @@ class VulkanApplication
             descriptorWrites[0].pBufferInfo     = &bufferInfo;
 
             descriptorWrites[1].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-            descriptorWrites[1].dstSet          = descriptorSets[i];
+            descriptorWrites[1].dstSet          = renderGroupsd[rgIndex].descriptorSets[i];
             descriptorWrites[1].dstBinding      = 1;
             descriptorWrites[1].dstArrayElement = 0;
             descriptorWrites[1].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
@@ -1213,7 +1226,17 @@ class VulkanApplication
         createSwapChain();
         createImageViews();
         createRenderPass();
-        createGraphicsPipeline();
+        //
+        //
+        //
+        //
+        //
+        // createGraphicsPipeline();
+        //
+        //
+        //
+        //
+        //
         createColorResources();
         createDepthResources();
         createFramebuffers();
@@ -1223,12 +1246,14 @@ class VulkanApplication
         //
         //
         //
-        createDescriptorSets();
+        // createDescriptorSets();
         //
         //
         //
+        swapChainIteration++;
         for (auto i = 0; i < renderGroups.size(); i++)
         {
+            // TODO: @MaxCompleteAPI, dont do this here, do this when a draw op is called on a commandBuffer with a lower iteration.
             recreateCommandBuffers(i);
         }
         //
@@ -1412,9 +1437,9 @@ class VulkanApplication
             vkCmdBeginRenderPass(renderGroups[rgIndex].commandBuffers[i], &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
 
             vkCmdBindDescriptorSets(renderGroups[rgIndex].commandBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout,
-                                    0, 1, &descriptorSets[i], 0, nullptr);
+                                    0, 1, &renderGroupsd[rgIndex].descriptorSets[i], 0, nullptr);
 
-            vkCmdBindPipeline(renderGroups[rgIndex].commandBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, graphicsPipeline);
+            vkCmdBindPipeline(renderGroups[rgIndex].commandBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, renderGroups[i].graphicsPipeline);
 
             VkBuffer     vertexBuffers[] = {renderGroups[rgIndex].vertexBuffer};
             VkDeviceSize offsets[]       = {0};
@@ -1682,7 +1707,7 @@ class VulkanApplication
         throwOnError(result, "failed to create render pass!");
     }
 
-    void createGraphicsPipeline()
+    void createGraphicsPipeline(int rgIndex)
     {
         auto vertShaderCode = readFile("shaders/vert.spv");
         auto fragShaderCode = readFile("shaders/frag.spv");
@@ -1897,11 +1922,11 @@ class VulkanApplication
         VkPipelineLayoutCreateInfo pipelineLayoutInfo = {};
         pipelineLayoutInfo.sType                      = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
         pipelineLayoutInfo.setLayoutCount             = 1;
-        pipelineLayoutInfo.pSetLayouts                = &descriptorSetLayout;
+        pipelineLayoutInfo.pSetLayouts                = &renderGroups[rgIndex].descriptorSetLayout;
         pipelineLayoutInfo.pushConstantRangeCount     = 0;        // Optional
         pipelineLayoutInfo.pPushConstantRanges        = nullptr;  // Optional
 
-        auto result = vkCreatePipelineLayout(device, &pipelineLayoutInfo, nullptr, &pipelineLayout);
+        auto result = vkCreatePipelineLayout(*renderGroups[rgIndex].device, &pipelineLayoutInfo, nullptr, &pipelineLayout);
         throwOnError(result, "failed to create pipeline layout!");
 
         VkPipelineDepthStencilStateCreateInfo depthStencil = {};
@@ -1964,7 +1989,7 @@ class VulkanApplication
         // across multiple calls to vkCreateGraphicsPipelines and even across program executions if the cache is stored
         // to a file. This makes it possible to significantly speed up pipeline creation at a later time. We'll get into
         // this in the pipeline cache chapter.
-        result = vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &graphicsPipeline);
+        result = vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &renderGroups[rgIndex].graphicsPipeline);
         throwOnError(result, "failed to create graphics pipeline!");
 
         vkDestroyShaderModule(device, fragShaderModule, nullptr);
@@ -2614,18 +2639,7 @@ class VulkanApplication
         }
     }
 
-    void mainLoop()
-    {
-        while (!glfwWindowShouldClose(window))
-        {
-            glfwPollEvents();
-            drawFrame();
-        }
-
-        vkDeviceWaitIdle(device);
-    }
-
-    void drawFrame()
+    void drawFrame(std::vector<int> renderGroupIndices)
     {
         // TODO: @MaxBestPractice, set the timeout
         vkWaitForFences(device, 1, &inFlightFences[currentFrame], VK_TRUE, UINT64_MAX);
@@ -2654,11 +2668,11 @@ class VulkanApplication
             throwOnError(result, "failed to acquire swap chain image!");
         }
 
-        updateUniformBuffer(imageIndex);
+        //updateUniformBuffer(imageIndex);
 
-        for (auto i = 0; i < renderGroups.size(); i++)
+        for (auto i = 0; i < renderGroupIndices.size(); i++)
         {
-            updateInstanceDataBuffer(i, imageIndex);
+            updateInstanceDataBuffer(renderGroupIndices[i], imageIndex);
         }
 
         VkSubmitInfo submitInfo = {};
@@ -2795,6 +2809,8 @@ class VulkanApplication
 
     void recreateCommandBuffers(int rgIndex)
     {
+        createGraphicsPipeline(rgIndex);
+        createDescriptorSets(rgIndex);
         vkFreeCommandBuffers(device, commandPool, static_cast<uint32_t>(renderGroups[rgIndex].commandBuffers.size()),
                              renderGroups[rgIndex].commandBuffers.data());
         createCommandBuffers(rgIndex);
@@ -2819,9 +2835,10 @@ class VulkanApplication
         {
             vkFreeCommandBuffers(*renderGroups[i].device, *renderGroups[i].commandPool,
                                  static_cast<uint32_t>(renderGroups[i].commandBuffers.size()), renderGroups[i].commandBuffers.data());
+            
+            vkDestroyPipeline(*renderGroups[i].device, renderGroups[i].graphicsPipeline, nullptr);
         }
 
-        vkDestroyPipeline(device, graphicsPipeline, nullptr);
         vkDestroyPipelineLayout(device, pipelineLayout, nullptr);
         vkDestroyRenderPass(device, renderPass, nullptr);
 
@@ -2894,38 +2911,13 @@ class VulkanApplication
     }
 
   public:
-    void run()
-    {
-        try
-        {
-            if (deferred_init)
-            {
-                initWindow();
-                initVulkan();
-                check_extensions();
-            }
-            mainLoop();
-        }
-        catch (const std::exception& e)
-        {
-            graphicsLog.Flush();
-            cleanup();
-            throw e;
-        }
-
-        cleanup();
-    }
-
     VulkanApplication(Logger& graphicsLog, uint16_t window_width, uint16_t window_height, std::string window_title,
-                      bool fullscreen = false, bool deferred_init = false)
+                      bool fullscreen = false)
         : graphicsLog(graphicsLog),
           window_width(window_width),
           window_height(window_height),
-          window_title(window_title),
-          deferred_init(deferred_init)
+          window_title(window_title)
     {
-        if (!deferred_init)
-        {
             try
             {
                 initWindow();
@@ -2938,7 +2930,6 @@ class VulkanApplication
                 cleanup();
                 throw e;
             }
-        }
         // std::string title
     }
 
@@ -3052,6 +3043,22 @@ class VulkanApplication
     {
         renderGroups[rgIndex].models[modelIndex]._modelMatrices[instanceIndex] = glm::mat4(0.0f);
         renderGroups[rgIndex].totalInstanceCount--;
+    }
+    
+    void updateInstanceModelMatrix(int rgIndex, int modelIndex, int instanceIndex, glm::mat4 model){
+        renderGroups[rgIndex].models[modelIndex]._modelMatrices[instanceIndex] = model;
+    }
+    
+    void renderFrame(std::vector<int> renderGroupIndices){
+        drawFrame(renderGroupIndices);
+    }
+    
+    void waitIdle(){
+        vkDeviceWaitIdle(device);
+    }
+    
+    void cleanupApp(){
+        cleanup();
     }
 };
 
