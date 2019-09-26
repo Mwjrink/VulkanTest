@@ -35,14 +35,14 @@ struct InstanceData
         return bindingDescription;
     }
 
-    static std::array<VkVertexInputAttributeDescription, 2> getAttributeDescriptions(uint32_t binding)
+    static void getAttributeDescriptions(uint32_t binding, std::vector<VkVertexInputAttributeDescription> &attributeDescriptions)
     {
-        std::array<VkVertexInputAttributeDescription, 2> attributeDescriptions = {};
-
-        attributeDescriptions[0].binding  = binding;
-        attributeDescriptions[0].location = 0;
-        attributeDescriptions[0].format   = VK_FORMAT_R32G32B32A32_SFLOAT;
-        attributeDescriptions[0].offset   = offsetof(InstanceData, projViewModel);
+        int index = attributeDescriptions.size();
+        attributeDescriptions.push_back({});
+        attributeDescriptions[index].binding  = binding;
+        attributeDescriptions[index].location = index;
+        attributeDescriptions[index].format   = VK_FORMAT_R32G32B32A32_SFLOAT;
+        attributeDescriptions[index].offset   = offsetof(InstanceData, projViewModel);
 
         // The format parameter describes the type of data for the attribute. A bit confusingly, the formats are specified
         // using the same enumeration as color formats. The following shader types and formats are commonly used together:
@@ -54,12 +54,11 @@ struct InstanceData
         // ivec2: VK_FORMAT_R32G32_SINT, a 2-component vector of 32-bit signed integers
         // uvec4: VK_FORMAT_R32G32B32A32_UINT, a 4-component vector of 32-bit unsigned integers
         // double: VK_FORMAT_R64_SFLOAT, a double-precision (64-bit) float
-
-        attributeDescriptions[1].binding  = binding;
-        attributeDescriptions[1].location = 1;
-        attributeDescriptions[1].format   = VK_FORMAT_R8_UINT;
-        attributeDescriptions[1].offset   = offsetof(InstanceData, textureIndex);
-
-        return attributeDescriptions;
+        index = attributeDescriptions.size();
+        attributeDescriptions.push_back({});
+        attributeDescriptions[index].binding  = binding;
+        attributeDescriptions[index].location = index;
+        attributeDescriptions[index].format   = VK_FORMAT_R8_UINT;
+        attributeDescriptions[index].offset   = offsetof(InstanceData, textureIndex);
     }
 };

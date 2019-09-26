@@ -872,10 +872,10 @@ class VulkanApplication
 
         for (size_t i = 0; i < swapChainImages.size(); i++)
         {
-            VkDescriptorBufferInfo bufferInfo = {};
-            bufferInfo.buffer                 = uniformBuffers[i];
-            bufferInfo.offset                 = 0;
-            bufferInfo.range                  = sizeof(UniformBufferObject);  // VK_WHOLE_SIZE
+//            VkDescriptorBufferInfo bufferInfo = {};
+//            bufferInfo.buffer                 = uniformBuffers[i];
+//            bufferInfo.offset                 = 0;
+//            bufferInfo.range                  = sizeof(UniformBufferObject);  // VK_WHOLE_SIZE
 
             std::vector<VkDescriptorImageInfo> imageInfos;
             imageInfos.resize(renderGroups[rgIndex].models.size());
@@ -887,29 +887,27 @@ class VulkanApplication
                 imageInfos[i].sampler     = renderGroups[rgIndex].textureSampler;
             }
 
-            std::array<VkWriteDescriptorSet, 2> descriptorWrites = {};
+            std::array<VkWriteDescriptorSet, 1> descriptorWrites = {};
 
-            // TODO: @MaxASAPCurrent, this probably needs to be bound to instance data not this
+//            descriptorWrites[0].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+//            descriptorWrites[0].dstSet          = renderGroups[rgIndex].descriptorSets[i];
+//            descriptorWrites[0].dstBinding      = 0;
+//            descriptorWrites[0].dstArrayElement = 0;
+//            descriptorWrites[0].descriptorType  = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+//            descriptorWrites[0].descriptorCount = 1;
+//            descriptorWrites[0].pBufferInfo     = &bufferInfo;
+
             descriptorWrites[0].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
             descriptorWrites[0].dstSet          = renderGroups[rgIndex].descriptorSets[i];
-            descriptorWrites[0].dstBinding      = 0;
+            descriptorWrites[0].dstBinding      = 1;
             descriptorWrites[0].dstArrayElement = 0;
-            descriptorWrites[0].descriptorType  = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-            descriptorWrites[0].descriptorCount = 1;
-            descriptorWrites[0].pBufferInfo     = &bufferInfo;
-
-            descriptorWrites[1].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-            descriptorWrites[1].dstSet          = renderGroups[rgIndex].descriptorSets[i];
-            descriptorWrites[1].dstBinding      = 1;
-            descriptorWrites[1].dstArrayElement = 0;
-            descriptorWrites[1].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-            descriptorWrites[1].descriptorCount = (int)renderGroups[rgIndex].models.size();
-            descriptorWrites[1].pImageInfo      = imageInfos.data();
+            descriptorWrites[0].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+            descriptorWrites[0].descriptorCount = (int)renderGroups[rgIndex].models.size();
+            descriptorWrites[0].pImageInfo      = imageInfos.data();
 
             // descriptorWrite.pTexelBufferView = nullptr;  // Optional
 
-            vkUpdateDescriptorSets(device, static_cast<uint32_t>(descriptorWrites.size()), descriptorWrites.data(), 0,
-                                   nullptr);
+            vkUpdateDescriptorSets(device, static_cast<uint32_t>(descriptorWrites.size()), descriptorWrites.data(), 0, nullptr);
         }
     }
 
@@ -1759,20 +1757,17 @@ class VulkanApplication
 
         // TODO: @MaxCompleteAPI, hardcoding the Vertex data as the accepted for this pipeline, make this accept any object
         // and be dynamic (TEMPLATES?!?!?! WOOOOHOO)
-        auto bindingDescription    = Vertex::getBindingDescription(0);
-        auto attributeDescriptions = Vertex::getAttributeDescriptions(0);
+        auto bindingDescriptions = std::vector<VkVertexInputBindingDescription>{
+            Vertex::getBindingDescription(0),
+            InstanceData::getBindingDescription(1)
+        };
+        
+        auto attributeDescriptions = std::vector<VkVertexInputAttributeDescription>();
+        //auto vertexBindingDescription    = Vertex::getBindingDescription(0);
+        Vertex::getAttributeDescriptions(0, attributeDescriptions);
 
-        // TDOIODODPODJKDHLHGDKJDKJ
-        dsafkjlgakjfg;
-        jds;
-        \s;
-        sd;
-
-        s;
-
-        dsdgs;
-        auto InstanceDataBindingDescription    = InstanceData::getBindingDescription(1);
-        auto InstanceDataAttributeDescriptions = InstanceData::getAttributeDescriptions(1);
+        //auto instanceDataBindingDescription    = InstanceData::getBindingDescription(1);
+        InstanceData::getAttributeDescriptions(1, attributeDescriptions);
 
         // Bindings: // spacing between data and whether the data is per-vertex or per-instance
         //           // https://en.wikipedia.org/wiki/Geometry_instancing
@@ -1780,9 +1775,9 @@ class VulkanApplication
         //                         // at which offset
         VkPipelineVertexInputStateCreateInfo vertexInputInfo = {};
         vertexInputInfo.sType                                = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
-        vertexInputInfo.vertexBindingDescriptionCount        = 1;
+        vertexInputInfo.vertexBindingDescriptionCount        = static_cast<uint32_t>(bindingDescriptions.size());
         vertexInputInfo.vertexAttributeDescriptionCount      = static_cast<uint32_t>(attributeDescriptions.size());
-        vertexInputInfo.pVertexBindingDescriptions           = &bindingDescription;
+        vertexInputInfo.pVertexBindingDescriptions           = bindingDescriptions.data();
         vertexInputInfo.pVertexAttributeDescriptions         = attributeDescriptions.data();
 
         // The VkPipelineInputAssemblyStateCreateInfo struct describes two things: what kind of geometry will be drawn

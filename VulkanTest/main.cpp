@@ -58,12 +58,12 @@ int main()
     auto modelIndex = app.addModel(renderGroupIndices[0], "models/chalet.obj", "textures/chalet.jpg");
     auto instanceIndex = app.addInstance(renderGroupIndices[0], modelIndex, glm::mat4(1.0f));
     
-    auto model               = glm::rotate(glm::mat4(1.0f), time * glm::radians(90.0f), glm::vec3(0.0f, 0.0f, 1.0f));
+    auto model = glm::mat4(1.0f);
     
     auto view = glm::lookAt(glm::vec3(2.0f, 2.0f, 2.0f), glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 0.0f, 1.0f));
     
     // TODO: @MaxCompleteAPI, probably have this auto set from VulkanApplication.h and choose/set FOV
-    auto proj = glm::perspective(glm::radians(45.0f), swapChainExtent.width / (float)swapChainExtent.height, 0.1f, 10.0f);
+    auto proj = glm::perspective(glm::radians(45.0f), 1920.0f / 1080.0f, 0.1f, 10.0f);
     
     // GLM was originally designed for OpenGL, where the Y coordinate of the clip coordinates is inverted. The easiest
     // way to compensate for that is to flip the sign on the scaling factor of the Y axis in the projection matrix. If
@@ -73,15 +73,28 @@ int main()
     app.setMatrices(view, proj);
     
     
-    
+    auto oldTime = glfwGetTime();
+    float dt = oldTime;
     try
     {
         while (!glfwWindowShouldClose(app.window))
         {
-            glfwPollEvents();
+            auto current = glfwGetTime();
+            dt = current - oldTime;
+            oldTime = current;
+            
+            //processInput();
+            //Update(dt); {
+            
+            model = glm::rotate(model, dt * glm::radians(90.0f), glm::vec3(0.0f, 0.0f, 1.0f));
+            // this is not ideal, probably pass back a pointer/reference to the model matrix in the vector itself to allow the user to modify it
+            app.updateInstanceModelMatrix(renderGroupIndices[0], modelIndex, instanceIndex, model);
+            
+            // } // Update
+            
             app.renderFrame(renderGroupIndices);
             
-            
+            glfwPollEvents();
         }
         
         app.waitIdle();
