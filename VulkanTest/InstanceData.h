@@ -11,23 +11,22 @@
 
 #include <array>
 
-struct Vertex
+struct InstanceData
 {
-    glm::vec3 pos;
-    glm::vec3 color;
-    glm::vec2 texCoord;
+    glm::mat4 projViewModel;
+    uint32_t textureIndex;
 
-    bool operator==(const Vertex& other) const
+	bool operator==(const InstanceData& other) const
     {
-        return pos == other.pos && color == other.color && texCoord == other.texCoord;
+        return projViewModel == other.projViewModel && textureIndex == other.textureIndex;
     }
 
     static VkVertexInputBindingDescription getBindingDescription(uint32_t binding)
     {
         VkVertexInputBindingDescription bindingDescription = {};
         bindingDescription.binding                         = binding;
-        bindingDescription.stride                          = sizeof(Vertex);
-        bindingDescription.inputRate                       = VK_VERTEX_INPUT_RATE_VERTEX;
+        bindingDescription.stride                          = sizeof(InstanceData);
+        bindingDescription.inputRate                       = VK_VERTEX_INPUT_RATE_INSTANCE;
 
         // inputRate parameter can have one of the following values:
         // VK_VERTEX_INPUT_RATE_VERTEX:   // Move to the next data entry after each vertex
@@ -36,14 +35,14 @@ struct Vertex
         return bindingDescription;
     }
 
-    static std::array<VkVertexInputAttributeDescription, 3> getAttributeDescriptions(uint32_t binding)
+    static std::array<VkVertexInputAttributeDescription, 2> getAttributeDescriptions(uint32_t binding)
     {
-        std::array<VkVertexInputAttributeDescription, 3> attributeDescriptions = {};
+        std::array<VkVertexInputAttributeDescription, 2> attributeDescriptions = {};
 
         attributeDescriptions[0].binding  = binding;
         attributeDescriptions[0].location = 0;
-        attributeDescriptions[0].format   = VK_FORMAT_R32G32B32_SFLOAT;
-        attributeDescriptions[0].offset   = offsetof(Vertex, pos);
+        attributeDescriptions[0].format   = VK_FORMAT_R32G32B32A32_SFLOAT;
+        attributeDescriptions[0].offset   = offsetof(InstanceData, projViewModel);
 
         // The format parameter describes the type of data for the attribute. A bit confusingly, the formats are specified
         // using the same enumeration as color formats. The following shader types and formats are commonly used together:
@@ -58,13 +57,8 @@ struct Vertex
 
         attributeDescriptions[1].binding  = binding;
         attributeDescriptions[1].location = 1;
-        attributeDescriptions[1].format   = VK_FORMAT_R32G32B32_SFLOAT;
-        attributeDescriptions[1].offset   = offsetof(Vertex, color);
-
-        attributeDescriptions[2].binding  = binding;
-        attributeDescriptions[2].location = 2;
-        attributeDescriptions[2].format   = VK_FORMAT_R32G32_SFLOAT;
-        attributeDescriptions[2].offset   = offsetof(Vertex, texCoord);
+        attributeDescriptions[1].format   = VK_FORMAT_R8_UINT;
+        attributeDescriptions[1].offset   = offsetof(InstanceData, textureIndex);
 
         return attributeDescriptions;
     }

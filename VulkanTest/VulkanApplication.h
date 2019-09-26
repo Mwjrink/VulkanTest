@@ -36,6 +36,7 @@
 #include <experimental/optional>
 #endif
 
+#include "InstanceData.h"
 #include "Logger.h"
 #include "Model.h"
 #include "Vertex.h"
@@ -87,6 +88,7 @@ struct QueueFamilyIndices
 
     bool isComplete() { return graphicsFamily.has_value() && presentFamily.has_value(); }
 #elif __APPLE__
+    // optionals dont exist on APPLE
     std::experimental::optional<uint32_t> graphicsFamily;
     std::experimental::optional<uint32_t> presentFamily;
 
@@ -109,20 +111,13 @@ struct SwapChainSupportDetails
 // A vec3 or vec4 must be aligned by 4N (= 16 bytes)
 // A nested structure must be aligned by the base alignment of its members rounded up to a multiple of 16.
 // A mat4 matrix must have the same alignment as a vec4.
-struct UniformBufferObject
-{
-    // being explicit about the alignment, though this is not necessarily necessary
-    alignas(16) glm::mat4 model;
-    alignas(16) glm::mat4 view;
-    alignas(16) glm::mat4 proj;
-};
-
-struct InstanceData
-{
-    // being explicit about the alignment, though this is not necessarily necessary
-    alignas(16) glm::mat4 projViewModel;
-    alignas(4) int textureIndex;
-};
+// struct UniformBufferObject
+//{
+//    // being explicit about the alignment, though this is not necessarily necessary
+//    alignas(16) glm::mat4 model;
+//    alignas(16) glm::mat4 view;
+//    alignas(16) glm::mat4 proj;
+//};
 
 static std::vector<char> readFile(const std::string& filename)
 {
@@ -157,7 +152,7 @@ class VulkanApplication
 {
   public:
     GLFWwindow* window;
-    
+
   private:
     VkInstance instance;
 
@@ -184,11 +179,11 @@ class VulkanApplication
 
     std::vector<VkImageView> swapChainImageViews;
 
-    VkRenderPass          renderPass;
-    //VkDescriptorSetLayout descriptorSetLayout;
-    VkPipelineLayout      pipelineLayout;
+    VkRenderPass renderPass;
+    // VkDescriptorSetLayout descriptorSetLayout;
+    VkPipelineLayout pipelineLayout;
 
-    //VkPipeline graphicsPipeline;
+    // VkPipeline graphicsPipeline;
 
     std::vector<VkFramebuffer> swapChainFramebuffers;
 
@@ -201,13 +196,13 @@ class VulkanApplication
 
     // We need multiple because we need one per in-flight frame (model/projection etc could (vast majority of cases) be
     // different every frame
-    //std::vector<VkBuffer>       uniformBuffers;
-    //std::vector<VkDeviceMemory> uniformBuffersMemory;
+    // std::vector<VkBuffer>       uniformBuffers;
+    // std::vector<VkDeviceMemory> uniformBuffersMemory;
 
-    VkDescriptorPool             descriptorPool;
-    //std::vector<VkDescriptorSet> descriptorSets;
+    VkDescriptorPool descriptorPool;
+    // std::vector<VkDescriptorSet> descriptorSets;
 
-    //VkSampler textureSampler;
+    // VkSampler textureSampler;
 
     VkImage        depthImage;
     VkDeviceMemory depthImageMemory;
@@ -216,7 +211,7 @@ class VulkanApplication
     VkImage        colorImage;
     VkDeviceMemory colorImageMemory;
     VkImageView    colorImageView;
-    
+
     uint32_t swapChainIteration;
 
     VkSampleCountFlagBits msaaSamples = VK_SAMPLE_COUNT_1_BIT;
@@ -332,7 +327,7 @@ class VulkanApplication
         createSwapChain();
         createImageViews();
         createRenderPass();
-        //createDescriptorSetLayout();
+        // createDescriptorSetLayout();
         //
         //
         //
@@ -354,11 +349,11 @@ class VulkanApplication
         // loadMesh();
         // createVertexBuffer();
         // createIndexBuffer();
-        createUniformBuffers();
+        // createUniformBuffers();
         createDescriptorPool();
-        //createDescriptorSets();
+        // createDescriptorSets();
 
-        //createCommandBuffers();
+        // createCommandBuffers();
 
         createSyncObjects();
     }
@@ -389,11 +384,10 @@ class VulkanApplication
         if (renderGroups[rgIndex].models.size() == 0) return;
 
         vkFreeCommandBuffers(*renderGroups[rgIndex].device, *renderGroups[rgIndex].commandPool,
-                             (int)renderGroups[rgIndex].commandBuffers.size(),
-                             renderGroups[rgIndex].commandBuffers.data());
+                             (int)renderGroups[rgIndex].commandBuffers.size(), renderGroups[rgIndex].commandBuffers.data());
 
         createCommandBuffers(rgIndex);
-        //renderGroups[rgIndex].commandBuffers;
+        // renderGroups[rgIndex].commandBuffers;
         //
     }
 
@@ -404,14 +398,15 @@ class VulkanApplication
         std::vector<tinyobj::material_t> materials;
         std::string                      warn, err;
 
-        if (!tinyobj::LoadObj(&attrib, &shapes, &materials, &warn, &err, renderGroups[rgIndex].models[modelIndex].mesh_path.c_str()))
+        if (!tinyobj::LoadObj(&attrib, &shapes, &materials, &warn, &err,
+                              renderGroups[rgIndex].models[modelIndex].mesh_path.c_str()))
         {
             throw std::runtime_error(warn + err);
         }
 
         std::unordered_map<Vertex, uint32_t> uniqueVertices = {};
-        
-        std::vector<Vertex> vertices;
+
+        std::vector<Vertex>   vertices;
         std::vector<uint32_t> indices;
 
         for (const auto& shape : shapes)
@@ -438,12 +433,12 @@ class VulkanApplication
                 indices.push_back(uniqueVertices[vertex]);
             }
         }
-        
+
         renderGroups[rgIndex].models[modelIndex].verticesOffset = renderGroups[rgIndex].vertices.size();
-        renderGroups[rgIndex].models[modelIndex].verticesCount = vertices.size();
-        renderGroups[rgIndex].models[modelIndex].indicesOffset = renderGroups[rgIndex].indices.size();
-        renderGroups[rgIndex].models[modelIndex].indicesCount = indices.size();
-        
+        renderGroups[rgIndex].models[modelIndex].verticesCount  = vertices.size();
+        renderGroups[rgIndex].models[modelIndex].indicesOffset  = renderGroups[rgIndex].indices.size();
+        renderGroups[rgIndex].models[modelIndex].indicesCount   = indices.size();
+
         renderGroups[rgIndex].vertices.insert(renderGroups[rgIndex].vertices.end(), vertices.begin(), vertices.end());
         renderGroups[rgIndex].indices.insert(renderGroups[rgIndex].indices.end(), indices.begin(), indices.end());
     }
@@ -464,7 +459,8 @@ class VulkanApplication
         vkUnmapMemory(device, stagingBufferMemory);
 
         createBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
-                     VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, renderGroups[rgIndex].indexBuffer, renderGroups[rgIndex].indexBufferMemory);
+                     VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, renderGroups[rgIndex].indexBuffer,
+                     renderGroups[rgIndex].indexBufferMemory);
 
         buffercpy(stagingBuffer, renderGroups[rgIndex].indexBuffer, bufferSize);
 
@@ -488,7 +484,8 @@ class VulkanApplication
         vkUnmapMemory(device, stagingBufferMemory);
 
         createBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
-                     VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, renderGroups[rgIndex].vertexBuffer, renderGroups[rgIndex].vertexBufferMemory);
+                     VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, renderGroups[rgIndex].vertexBuffer,
+                     renderGroups[rgIndex].vertexBufferMemory);
 
         buffercpy(stagingBuffer, renderGroups[rgIndex].vertexBuffer, bufferSize);
 
@@ -618,12 +615,14 @@ class VulkanApplication
     void createTextureSampler(int rgIndex)
     {
         auto lowestMips = INT_MAX;
-        for(auto i=0; i<renderGroups[rgIndex].models.size(); i++){
-            if(renderGroups[rgIndex].models[i].mipLevels < lowestMips){
+        for (auto i = 0; i < renderGroups[rgIndex].models.size(); i++)
+        {
+            if (renderGroups[rgIndex].models[i].mipLevels < lowestMips)
+            {
                 lowestMips = renderGroups[rgIndex].models[i].mipLevels;
             }
         }
-        
+
         VkSamplerCreateInfo samplerInfo = {};
         samplerInfo.sType               = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
         samplerInfo.magFilter           = VK_FILTER_LINEAR;
@@ -866,9 +865,9 @@ class VulkanApplication
         allocInfo.descriptorSetCount                 = static_cast<uint32_t>(swapChainImages.size());
         allocInfo.pSetLayouts                        = layouts.data();
 
-        renderGroupsd[rgIndex].descriptorSets.resize(swapChainImages.size());
+        renderGroups[rgIndex].descriptorSets.resize(swapChainImages.size());
 
-        auto result = vkAllocateDescriptorSets(device, &allocInfo, renderGroupsd[rgIndex].descriptorSets.data());
+        auto result = vkAllocateDescriptorSets(device, &allocInfo, renderGroups[rgIndex].descriptorSets.data());
         throwOnError(result, "failed to allocate descriptor sets!");
 
         for (size_t i = 0; i < swapChainImages.size(); i++)
@@ -880,18 +879,19 @@ class VulkanApplication
 
             std::vector<VkDescriptorImageInfo> imageInfos;
             imageInfos.resize(renderGroups[rgIndex].models.size());
-            for(auto i=0; i< renderGroups[rgIndex].models.size(); i++){
-                imageInfos[i] = {};
-                imageInfos[i].imageLayout           = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-                imageInfos[i].imageView             = renderGroups[rgIndex].models[i].textureImageView;
-                imageInfos[i].sampler               = renderGroups[rgIndex].textureSampler;
+            for (auto i = 0; i < renderGroups[rgIndex].models.size(); i++)
+            {
+                imageInfos[i]             = {};
+                imageInfos[i].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+                imageInfos[i].imageView   = renderGroups[rgIndex].models[i].textureImageView;
+                imageInfos[i].sampler     = renderGroups[rgIndex].textureSampler;
             }
 
             std::array<VkWriteDescriptorSet, 2> descriptorWrites = {};
 
             // TODO: @MaxASAPCurrent, this probably needs to be bound to instance data not this
             descriptorWrites[0].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-            descriptorWrites[0].dstSet          = renderGroupsd[rgIndex].descriptorSets[i];
+            descriptorWrites[0].dstSet          = renderGroups[rgIndex].descriptorSets[i];
             descriptorWrites[0].dstBinding      = 0;
             descriptorWrites[0].dstArrayElement = 0;
             descriptorWrites[0].descriptorType  = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
@@ -899,7 +899,7 @@ class VulkanApplication
             descriptorWrites[0].pBufferInfo     = &bufferInfo;
 
             descriptorWrites[1].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-            descriptorWrites[1].dstSet          = renderGroupsd[rgIndex].descriptorSets[i];
+            descriptorWrites[1].dstSet          = renderGroups[rgIndex].descriptorSets[i];
             descriptorWrites[1].dstBinding      = 1;
             descriptorWrites[1].dstArrayElement = 0;
             descriptorWrites[1].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
@@ -935,20 +935,36 @@ class VulkanApplication
         throwOnError(result, "failed to create descriptor pool!");
     }
 
-    void createUniformBuffers()
-    {
-        VkDeviceSize bufferSize = sizeof(UniformBufferObject);
+    // void createUniformBuffers()
+    //{
+    //    VkDeviceSize bufferSize = sizeof(UniformBufferObject);
 
-        uniformBuffers.resize(swapChainImages.size());
-        uniformBuffersMemory.resize(swapChainImages.size());
+    //    uniformBuffers.resize(swapChainImages.size());
+    //    uniformBuffersMemory.resize(swapChainImages.size());
 
-        for (size_t i = 0; i < swapChainImages.size(); i++)
-        {
-            createBuffer(bufferSize, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
-                         VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, uniformBuffers[i],
-                         uniformBuffersMemory[i]);
-        }
-    }
+    //    for (size_t i = 0; i < swapChainImages.size(); i++)
+    //    {
+    //        createBuffer(bufferSize, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+    //                     VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, uniformBuffers[i],
+    //                     uniformBuffersMemory[i]);
+    //    }
+    //}
+
+    // void createInstanceBuffers(int rgIndex)
+    // {
+    //     VkDeviceSize bufferSize = sizeof(UniformBufferObject);
+
+    //     renderGroups[rgIndex].instanceDataBuffer.resize(swapChainImages.size());
+    //     renderGroups[rgIndex].instanceDataBufferMemory.resize(swapChainImages.size());
+
+    //     for (auto i = 0; i < swapChainImages.size(); i++)
+    //     {
+    ///*VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT*/
+    //         createBuffer(bufferSize, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+    //                      VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+    //                      renderGroups[rgIndex].instanceDataBuffer[i], renderGroups[rgIndex].instanceDataBufferMemory[i]);
+    //     }
+    // }
 
     void createDescriptorSetLayout(int rgIndex)
     {
@@ -1240,7 +1256,7 @@ class VulkanApplication
         createColorResources();
         createDepthResources();
         createFramebuffers();
-        createUniformBuffers();
+        // createUniformBuffers();
         createDescriptorPool();
         //
         //
@@ -1253,7 +1269,8 @@ class VulkanApplication
         swapChainIteration++;
         for (auto i = 0; i < renderGroups.size(); i++)
         {
-            // TODO: @MaxCompleteAPI, dont do this here, do this when a draw op is called on a commandBuffer with a lower iteration.
+            // TODO: @MaxCompleteAPI, dont do this here, do this when a draw op is called on a commandBuffer with a lower
+            // iteration.
             recreateCommandBuffers(i);
         }
         //
@@ -1437,9 +1454,10 @@ class VulkanApplication
             vkCmdBeginRenderPass(renderGroups[rgIndex].commandBuffers[i], &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
 
             vkCmdBindDescriptorSets(renderGroups[rgIndex].commandBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout,
-                                    0, 1, &renderGroupsd[rgIndex].descriptorSets[i], 0, nullptr);
+                                    0, 1, &renderGroups[rgIndex].descriptorSets[i], 0, nullptr);
 
-            vkCmdBindPipeline(renderGroups[rgIndex].commandBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, renderGroups[i].graphicsPipeline);
+            vkCmdBindPipeline(renderGroups[rgIndex].commandBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS,
+                              renderGroups[i].graphicsPipeline);
 
             VkBuffer     vertexBuffers[] = {renderGroups[rgIndex].vertexBuffer};
             VkDeviceSize offsets[]       = {0};
@@ -1741,8 +1759,20 @@ class VulkanApplication
 
         // TODO: @MaxCompleteAPI, hardcoding the Vertex data as the accepted for this pipeline, make this accept any object
         // and be dynamic (TEMPLATES?!?!?! WOOOOHOO)
-        auto bindingDescription    = Vertex::getBindingDescription();
-        auto attributeDescriptions = Vertex::getAttributeDescriptions();
+        auto bindingDescription    = Vertex::getBindingDescription(0);
+        auto attributeDescriptions = Vertex::getAttributeDescriptions(0);
+
+        // TDOIODODPODJKDHLHGDKJDKJ
+        dsafkjlgakjfg;
+        jds;
+        \s;
+        sd;
+
+        s;
+
+        dsdgs;
+        auto InstanceDataBindingDescription    = InstanceData::getBindingDescription(1);
+        auto InstanceDataAttributeDescriptions = InstanceData::getAttributeDescriptions(1);
 
         // Bindings: // spacing between data and whether the data is per-vertex or per-instance
         //           // https://en.wikipedia.org/wiki/Geometry_instancing
@@ -1764,8 +1794,7 @@ class VulkanApplication
         // VK_PRIMITIVE_TOPOLOGY_LINE_STRIP:	 the end vertex of every line is used as start vertex for the next line
         // VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST:  triangle from every 3 vertices without reuse
         // VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP: the second and third vertex of every triangle are used as first two
-        // vertices
-        //										 of the next triangle
+        //										 vertices of the next triangle
         //
         // Normally, the vertices are loaded from the vertex buffer by index in sequential order, but
         // with an element buffer you can specify the indices to use yourself. This allows you to perform optimizations
@@ -1989,7 +2018,8 @@ class VulkanApplication
         // across multiple calls to vkCreateGraphicsPipelines and even across program executions if the cache is stored
         // to a file. This makes it possible to significantly speed up pipeline creation at a later time. We'll get into
         // this in the pipeline cache chapter.
-        result = vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &renderGroups[rgIndex].graphicsPipeline);
+        result = vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr,
+                                           &renderGroups[rgIndex].graphicsPipeline);
         throwOnError(result, "failed to create graphics pipeline!");
 
         vkDestroyShaderModule(device, fragShaderModule, nullptr);
@@ -2668,7 +2698,7 @@ class VulkanApplication
             throwOnError(result, "failed to acquire swap chain image!");
         }
 
-        //updateUniformBuffer(imageIndex);
+        // updateUniformBuffer(imageIndex);
 
         for (auto i = 0; i < renderGroupIndices.size(); i++)
         {
@@ -2733,37 +2763,44 @@ class VulkanApplication
             throwOnError(result, "failed to present swap chain image!");
         }
 
+        for (auto i = 0; i < renderGroupIndices.size(); i++)
+        {
+            vkDestroyBuffer(device, renderGroups[i].indexBuffer, nullptr);
+            vkFreeMemory(device, renderGroups[i].indexBufferMemory, nullptr);
+        }
+
         currentFrame = (currentFrame + 1) % MAX_FRAMES_IN_FLIGHT;
     }
 
     // TODO: @MaxCompleteAPI, Using a UBO this way is not the most efficient way to pass frequently changing values to the
     // shader. A more efficient way to pass a small buffer of data to shaders are push constants.
-    void updateUniformBuffer(uint32_t currentImage)
-    {
-        static auto startTime = glfwGetTime();
+    // void updateUniformBuffer(uint32_t currentImage)
+    //{
+    //    static auto startTime = glfwGetTime();
 
-        auto  currentTime = glfwGetTime();
-        float time        = (currentTime - startTime);
+    //    auto  currentTime = glfwGetTime();
+    //    float time        = (currentTime - startTime);
 
-        UniformBufferObject ubo = {};
-        ubo.model               = glm::rotate(glm::mat4(1.0f), time * glm::radians(90.0f), glm::vec3(0.0f, 0.0f, 1.0f));
+    //    UniformBufferObject ubo = {};
+    //    ubo.model               = glm::rotate(glm::mat4(1.0f), time * glm::radians(90.0f), glm::vec3(0.0f, 0.0f, 1.0f));
 
-        ubo.view = glm::lookAt(glm::vec3(2.0f, 2.0f, 2.0f), glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 0.0f, 1.0f));
+    //    ubo.view = glm::lookAt(glm::vec3(2.0f, 2.0f, 2.0f), glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 0.0f, 1.0f));
 
-        ubo.proj = glm::perspective(glm::radians(45.0f), swapChainExtent.width / (float)swapChainExtent.height, 0.1f, 10.0f);
+    //    ubo.proj = glm::perspective(glm::radians(45.0f), swapChainExtent.width / (float)swapChainExtent.height,
+    //    0.1f, 10.0f);
 
-        // GLM was originally designed for OpenGL, where the Y coordinate of the clip coordinates is inverted. The easiest
-        // way to compensate for that is to flip the sign on the scaling factor of the Y axis in the projection matrix. If
-        // you don't do this, then the image will be rendered upside down.
-        ubo.proj[1][1] *= -1;
+    //    // GLM was originally designed for OpenGL, where the Y coordinate of the clip coordinates is inverted. The easiest
+    //    // way to compensate for that is to flip the sign on the scaling factor of the Y axis in the projection matrix. If
+    //    // you don't do this, then the image will be rendered upside down.
+    //    ubo.proj[1][1] *= -1;
 
-        void* data;
-        vkMapMemory(device, uniformBuffersMemory[currentImage], 0, sizeof(ubo), 0, &data);
-        memcpy(data, &ubo, sizeof(ubo));
-        vkUnmapMemory(device, uniformBuffersMemory[currentImage]);
-    }
+    //    void* data;
+    //    vkMapMemory(device, uniformBuffersMemory[currentImage], 0, sizeof(ubo), 0, &data);
+    //    memcpy(data, &ubo, sizeof(ubo));
+    //    vkUnmapMemory(device, uniformBuffersMemory[currentImage]);
+    //}
 
-    void updateInstanceDataBuffer(int rgIndex, int imageIndex)
+    void updateInstanceDataBuffer(int rgIndex, uint32_t imageIndex)
     {
         std::vector<InstanceData> instanceData;
         instanceData.resize(renderGroups[rgIndex].totalInstanceCount);
@@ -2784,27 +2821,36 @@ class VulkanApplication
             }
         }
 
+        // renderGroups[rgIndex].instanceDataBufferSize[currentImage]
         VkDeviceSize bufferSize = instanceData.size() * sizeof(InstanceData);
 
-        VkBuffer       stagingBuffer;
-        VkDeviceMemory stagingBufferMemory;
-        createBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
-                     VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, stagingBuffer,
-                     stagingBufferMemory);
+        if (bufferSize != renderGroups[rgIndex].instanceDataBufferSize)
+        {
+            createBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+                         VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                         renderGroups[rgIndex].instanceDataStagingBuffer,
+                         renderGroups[rgIndex].instanceDataStagingBufferMemory);
+        }
 
         void* data;
-        vkMapMemory(device, stagingBufferMemory, 0, bufferSize, 0, &data);
+        vkMapMemory(device, renderGroups[rgIndex].instanceDataStagingBufferMemory, 0, bufferSize, 0, &data);
         memcpy(data, instanceData.data(), (size_t)bufferSize);
-        vkUnmapMemory(device, stagingBufferMemory);
+        vkUnmapMemory(device, renderGroups[rgIndex].instanceDataStagingBufferMemory);
 
-        createBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
-                     VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, renderGroups[rgIndex].instanceDataBuffer[imageIndex],
-                     renderGroups[rgIndex].instanceDataBufferMemory[imageIndex]);
+        if (bufferSize != renderGroups[rgIndex].instanceDataBufferSize)
+        {
+            createBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+                         VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, renderGroups[rgIndex].instanceDataBuffer[imageIndex],
+                         renderGroups[rgIndex].instanceDataBufferMemory[imageIndex]);
 
-        buffercpy(stagingBuffer, renderGroups[rgIndex].instanceDataBuffer[imageIndex], bufferSize);
+            renderGroups[rgIndex].instanceDataBufferSize = bufferSize;
+        }
 
-        vkDestroyBuffer(device, stagingBuffer, nullptr);
-        vkFreeMemory(device, stagingBufferMemory, nullptr);
+        buffercpy(renderGroups[rgIndex].instanceDataStagingBuffer, renderGroups[rgIndex].instanceDataBuffer[imageIndex],
+                  bufferSize);
+
+        // vkDestroyBuffer(device, stagingBuffer, nullptr);
+        // vkFreeMemory(device, stagingBufferMemory, nullptr);
     }
 
     void recreateCommandBuffers(int rgIndex)
@@ -2834,8 +2880,9 @@ class VulkanApplication
         for (auto i = 0; i < renderGroups.size(); i++)
         {
             vkFreeCommandBuffers(*renderGroups[i].device, *renderGroups[i].commandPool,
-                                 static_cast<uint32_t>(renderGroups[i].commandBuffers.size()), renderGroups[i].commandBuffers.data());
-            
+                                 static_cast<uint32_t>(renderGroups[i].commandBuffers.size()),
+                                 renderGroups[i].commandBuffers.data());
+
             vkDestroyPipeline(*renderGroups[i].device, renderGroups[i].graphicsPipeline, nullptr);
         }
 
@@ -2849,11 +2896,20 @@ class VulkanApplication
 
         vkDestroySwapchainKHR(device, swapChain, nullptr);
 
-        for (size_t i = 0; i < swapChainImages.size(); i++)
+        for (auto i = 0; i < renderGroups.size(); i++)
         {
-            vkDestroyBuffer(device, uniformBuffers[i], nullptr);
-            vkFreeMemory(device, uniformBuffersMemory[i], nullptr);
+            for (auto j = 0; j < swapChainImages.size(); j++)
+            {
+                vkDestroyBuffer(device, renderGroups[i].instanceDataBuffer[j], nullptr);
+                vkFreeMemory(device, renderGroups[i].instanceDataBufferMemory[j], nullptr);
+            }
         }
+
+        // for (size_t i = 0; i < swapChainImages.size(); i++)
+        //{
+        //    vkDestroyBuffer(device, uniformBuffers[i], nullptr);
+        //    vkFreeMemory(device, uniformBuffersMemory[i], nullptr);
+        //}
 
         vkDestroyDescriptorPool(device, descriptorPool, nullptr);
     }
@@ -2862,13 +2918,12 @@ class VulkanApplication
     {
         cleanupSwapChain();
 
-
         // basically if it has an exception, I want these to be cleaned up, in all other situations I want it done here at
         // this time
         for (auto i = 0; i < renderGroups.size(); i++)
         {
             vkDestroySampler(*renderGroups[i].device, renderGroups[i].textureSampler, nullptr);
-            
+
             for (auto i = 0; i < renderGroups[i].models.size(); i++)
             {
                 renderGroups[i].models[i].~Model();
@@ -2879,7 +2934,7 @@ class VulkanApplication
         {
             vkDestroyDescriptorSetLayout(*renderGroups[i].device, renderGroups[i].descriptorSetLayout, nullptr);
         }
-            
+
         for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++)
         {
             vkDestroySemaphore(device, renderFinishedSemaphores[i], nullptr);
@@ -2913,23 +2968,20 @@ class VulkanApplication
   public:
     VulkanApplication(Logger& graphicsLog, uint16_t window_width, uint16_t window_height, std::string window_title,
                       bool fullscreen = false)
-        : graphicsLog(graphicsLog),
-          window_width(window_width),
-          window_height(window_height),
-          window_title(window_title)
+        : graphicsLog(graphicsLog), window_width(window_width), window_height(window_height), window_title(window_title)
     {
-            try
-            {
-                initWindow();
-                initVulkan();
-                check_extensions();
-            }
-            catch (const std::exception& e)
-            {
-                graphicsLog.Flush();
-                cleanup();
-                throw e;
-            }
+        try
+        {
+            initWindow();
+            initVulkan();
+            check_extensions();
+        }
+        catch (const std::exception& e)
+        {
+            graphicsLog.Flush();
+            cleanup();
+            throw e;
+        }
         // std::string title
     }
 
@@ -2987,7 +3039,8 @@ class VulkanApplication
         createTextureImageView(*model);
 
         // TODO: @MaxCompleteAPI, make all these int indices size_t instead
-        // actually maybe not because leaving them as ints guarantees they fit in the vulkan create structs (which use int rather than size_t).
+        // actually maybe not because leaving them as ints guarantees they fit in the vulkan create structs (which use int
+        // rather than size_t).
         return (int)index;
     }
 
@@ -3044,22 +3097,17 @@ class VulkanApplication
         renderGroups[rgIndex].models[modelIndex]._modelMatrices[instanceIndex] = glm::mat4(0.0f);
         renderGroups[rgIndex].totalInstanceCount--;
     }
-    
-    void updateInstanceModelMatrix(int rgIndex, int modelIndex, int instanceIndex, glm::mat4 model){
+
+    void updateInstanceModelMatrix(int rgIndex, int modelIndex, int instanceIndex, glm::mat4 model)
+    {
         renderGroups[rgIndex].models[modelIndex]._modelMatrices[instanceIndex] = model;
     }
-    
-    void renderFrame(std::vector<int> renderGroupIndices){
-        drawFrame(renderGroupIndices);
-    }
-    
-    void waitIdle(){
-        vkDeviceWaitIdle(device);
-    }
-    
-    void cleanupApp(){
-        cleanup();
-    }
+
+    void renderFrame(std::vector<int> renderGroupIndices) { drawFrame(renderGroupIndices); }
+
+    void waitIdle() { vkDeviceWaitIdle(device); }
+
+    void cleanupApp() { cleanup(); }
 };
 
 // The input assembler collects the raw vertex data from the buffers you specify and may also use an index buffer to

@@ -34,10 +34,11 @@ class Model
     // TODO: @MaxCompleteAPI, this likely shouldn't be here and if it needs to be it should be dumped after loading
     // put this as a temp variable in loading then dump it once uploaded?
     // maybe not possible when we are recreating RenderGroups and need to reupload these to the buffer
-    //std::vector<Vertex>   vertices;
-    //std::vector<uint32_t> indices;  // It is possible to use either uint16_t or uint32_t for your index buffer depending on
-                                    // the number of entries in vertices. We can stick to uint16_t for now because we're
-                                    // using less than 65535 unique vertices.
+    // std::vector<Vertex>   vertices;
+    // std::vector<uint32_t> indices;  // It is possible to use either uint16_t or uint32_t for your index buffer depending
+    // on
+    // the number of entries in vertices. We can stick to uint16_t for now because we're
+    // using less than 65535 unique vertices.
     size_t verticesOffset;
     size_t verticesCount;
     size_t indicesOffset;
@@ -46,10 +47,10 @@ class Model
     std::vector<glm::mat4> _modelMatrices;
 
     bool cleaned_up = false;
-    
+
     friend class VulkanApplication;
     friend class RenderGroup;
-    
+
   public:
     ~Model()
     {
@@ -79,7 +80,7 @@ class RenderGroup
     // TODO: @MaxCompleteAPI, don't think this is necessary
     std::string name;
 
-	// TODO: @MaxCompleteAPI, allow option to cull entire groups
+    // TODO: @MaxCompleteAPI, allow option to cull entire groups
   private:
     std::vector<Model>           models;
     std::vector<VkCommandBuffer> commandBuffers;  // size of frames_in_flight
@@ -87,26 +88,34 @@ class RenderGroup
     VkCommandPool* commandPool;  // this can change based on which thread calls rebuildCommandBuffers as this is essentially
                                  // a per thread allocator for GPU memory and commandBuffers
 
-	std::vector<Vertex>   vertices;
-    std::vector<uint32_t> indices;// It is possible to use either uint16_t or uint32_t for your index buffer depending on
+    std::vector<Vertex>   vertices;
+    std::vector<uint32_t> indices;  // It is possible to use either uint16_t or uint32_t for your index buffer depending on
                                     // the number of entries in vertices. We can stick to uint16_t for now because we're
                                     // using less than 65535 unique vertices.
 
-	int totalInstanceCount;
+    int totalInstanceCount;
 
     bool dynamic = false;  // rebuilt often
 
     VkBuffer       vertexBuffer;
     VkDeviceMemory vertexBufferMemory;
+    // VkDeviceSize   vertexBufferSize;
     VkBuffer       indexBuffer;
     VkDeviceMemory indexBufferMemory;
+    // VkDeviceSize   indexBufferSize;
+
+    VkBuffer       instanceDataStagingBuffer;
+    VkDeviceMemory instanceDataStagingBufferMemory;
+    //VkDeviceSize   instanceDataStagingBufferSize;
 
     std::vector<VkBuffer>       instanceDataBuffer;
     std::vector<VkDeviceMemory> instanceDataBufferMemory;
-    
-    VkPipeline graphicsPipeline;
+    //std::vector<VkDeviceSize>   instanceDataBufferSize;
+    VkDeviceSize   instanceDataBufferSize;
+
+    VkPipeline            graphicsPipeline;
     VkDescriptorSetLayout descriptorSetLayout;
-    
+
     VkDescriptorPool*            descriptorPool;
     std::vector<VkDescriptorSet> descriptorSets;
 
@@ -117,9 +126,9 @@ class RenderGroup
     VkSampler textureSampler;
 
     bool cleaned_up = false;
-    
+
     friend class VulkanApplication;
-    
+
   public:
     ~RenderGroup()
     {
