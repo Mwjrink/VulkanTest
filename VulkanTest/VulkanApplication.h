@@ -21,24 +21,23 @@
 #include <array>
 #include <cstdint>  // Necessary for UINT32_MAX
 #include <fstream>
+#include <iostream>
 #include <map>
 #include <set>
 #include <stdexcept>
 #include <unordered_map>
 #include <vector>
 
-#include <iostream>
-
 #ifdef _WIN32
 #include <filesystem>
-#include <optional>
-#elif __APPLE__
-#include <experimental/optional>
 #endif
+
+#include <optional>
 
 #include "InstanceData.h"
 #include "Logger.h"
 #include "Model.h"
+#include "RenderGroup.h"
 #include "Vertex.h"
 
 const int MAX_FRAMES_IN_FLIGHT = 2;
@@ -82,18 +81,10 @@ namespace std
 
 struct QueueFamilyIndices
 {
-#ifdef _WIN32
     std::optional<uint32_t> graphicsFamily;
     std::optional<uint32_t> presentFamily;
 
     bool isComplete() { return graphicsFamily.has_value() && presentFamily.has_value(); }
-#elif __APPLE__
-    // optionals dont exist on APPLE
-    std::experimental::optional<uint32_t> graphicsFamily;
-    std::experimental::optional<uint32_t> presentFamily;
-
-    bool       isComplete() { return graphicsFamily.operator bool() && presentFamily.operator bool(); }
-#endif
 };
 
 struct SwapChainSupportDetails
@@ -225,7 +216,8 @@ class VulkanApplication
 
     bool framebufferResized = false;
 
-    std::vector<RenderGroup> renderGroups;
+    std::vector<_RenderGroup> renderGroups;
+    int                       culledIndex;
 
     glm::mat4 _view;
     glm::mat4 _proj;
@@ -381,13 +373,14 @@ class VulkanApplication
 
     void GenerateCommandBuffers(int rgIndex)
     {
-        if (renderGroups[rgIndex].models.size() == 0) return;
+        if (renderGroups[rgIndex]._models.size() == 0) return;
 
-        vkFreeCommandBuffers(*renderGroups[rgIndex].device, *renderGroups[rgIndex].commandPool,
-                             (int)renderGroups[rgIndex].commandBuffers.size(), renderGroups[rgIndex].commandBuffers.data());
+        vkFreeCommandBuffers(*renderGroups[rgIndex]._device, *renderGroups[rgIndex]._commandPool,
+                             (int)renderGroups[rgIndex]._commandBuffers.size(),
+                             renderGroups[rgIndex]._commandBuffers.data());
 
         createCommandBuffers(rgIndex);
-        // renderGroups[rgIndex].commandBuffers;
+        // renderGroups[rgIndex]._commandBuffers;
         //
     }
 
@@ -399,7 +392,7 @@ class VulkanApplication
         std::string                      warn, err;
 
         if (!tinyobj::LoadObj(&attrib, &shapes, &materials, &warn, &err,
-                              renderGroups[rgIndex].models[modelIndex].mesh_path.c_str()))
+                              renderGroups[rgIndex]._models[modelIndex].mesh_path.c_str()))
         {
             throw std::runtime_error(warn + err);
         }
@@ -426,7 +419,7 @@ class VulkanApplication
 
                 if (uniqueVertices.count(vertex) == 0)
                 {
-                    uniqueVertices[vertex] = static_cast<uint32_t>(renderGroups[rgIndex].vertices.size());
+                    uniqueVertices[vertex] = static_cast<uint32_t>(renderGroups[rgIndex]._vertices.size());
                     vertices.push_back(vertex);
                 }
 
@@ -434,18 +427,18 @@ class VulkanApplication
             }
         }
 
-        renderGroups[rgIndex].models[modelIndex].verticesOffset = renderGroups[rgIndex].vertices.size();
-        renderGroups[rgIndex].models[modelIndex].verticesCount  = vertices.size();
-        renderGroups[rgIndex].models[modelIndex].indicesOffset  = renderGroups[rgIndex].indices.size();
-        renderGroups[rgIndex].models[modelIndex].indicesCount   = indices.size();
+        renderGroups[rgIndex]._models[modelIndex].verticesOffset = renderGroups[rgIndex]._vertices.size();
+        renderGroups[rgIndex]._models[modelIndex].verticesCount  = vertices.size();
+        renderGroups[rgIndex]._models[modelIndex].indicesOffset  = renderGroups[rgIndex]._indices.size();
+        renderGroups[rgIndex]._models[modelIndex].indicesCount   = indices.size();
 
-        renderGroups[rgIndex].vertices.insert(renderGroups[rgIndex].vertices.end(), vertices.begin(), vertices.end());
-        renderGroups[rgIndex].indices.insert(renderGroups[rgIndex].indices.end(), indices.begin(), indices.end());
+        renderGroups[rgIndex]._vertices.insert(renderGroups[rgIndex]._vertices.end(), vertices.begin(), vertices.end());
+        renderGroups[rgIndex]._indices.insert(renderGroups[rgIndex]._indices.end(), indices.begin(), indices.end());
     }
 
     void createIndexBuffer(int rgIndex)
     {
-        VkDeviceSize bufferSize = sizeof(renderGroups[rgIndex].indices[0]) * renderGroups[rgIndex].indices.size();
+        VkDeviceSize bufferSize = sizeof(renderGroups[rgIndex]._indices[0]) * renderGroups[rgIndex]._indices.size();
 
         VkBuffer       stagingBuffer;
         VkDeviceMemory stagingBufferMemory;
@@ -455,14 +448,14 @@ class VulkanApplication
 
         void* data;
         vkMapMemory(device, stagingBufferMemory, 0, bufferSize, 0, &data);
-        memcpy(data, renderGroups[rgIndex].indices.data(), (size_t)bufferSize);
+        memcpy(data, renderGroups[rgIndex]._indices.data(), (size_t)bufferSize);
         vkUnmapMemory(device, stagingBufferMemory);
 
         createBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
-                     VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, renderGroups[rgIndex].indexBuffer,
-                     renderGroups[rgIndex].indexBufferMemory);
+                     VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, renderGroups[rgIndex]._indexBuffer,
+                     renderGroups[rgIndex]._indexBufferMemory);
 
-        buffercpy(stagingBuffer, renderGroups[rgIndex].indexBuffer, bufferSize);
+        buffercpy(stagingBuffer, renderGroups[rgIndex]._indexBuffer, bufferSize);
 
         vkDestroyBuffer(device, stagingBuffer, nullptr);
         vkFreeMemory(device, stagingBufferMemory, nullptr);
@@ -470,7 +463,7 @@ class VulkanApplication
 
     void createVertexBuffer(int rgIndex)
     {
-        VkDeviceSize bufferSize = sizeof(renderGroups[rgIndex].vertices[0]) * renderGroups[rgIndex].vertices.size();
+        VkDeviceSize bufferSize = sizeof(renderGroups[rgIndex]._vertices[0]) * renderGroups[rgIndex]._vertices.size();
 
         VkBuffer       stagingBuffer;
         VkDeviceMemory stagingBufferMemory;
@@ -480,14 +473,14 @@ class VulkanApplication
 
         void* data;
         vkMapMemory(device, stagingBufferMemory, 0, bufferSize, 0, &data);
-        memcpy(data, renderGroups[rgIndex].vertices.data(), (size_t)bufferSize);
+        memcpy(data, renderGroups[rgIndex]._vertices.data(), (size_t)bufferSize);
         vkUnmapMemory(device, stagingBufferMemory);
 
         createBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
-                     VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, renderGroups[rgIndex].vertexBuffer,
-                     renderGroups[rgIndex].vertexBufferMemory);
+                     VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, renderGroups[rgIndex]._vertexBuffer,
+                     renderGroups[rgIndex]._vertexBufferMemory);
 
-        buffercpy(stagingBuffer, renderGroups[rgIndex].vertexBuffer, bufferSize);
+        buffercpy(stagingBuffer, renderGroups[rgIndex]._vertexBuffer, bufferSize);
 
         vkDestroyBuffer(device, stagingBuffer, nullptr);
         vkFreeMemory(device, stagingBufferMemory, nullptr);
@@ -508,7 +501,7 @@ class VulkanApplication
 
     //
 
-    void createTextureImage(Model& model)
+    void createTextureImage(_Model& model)
     {
         int          texWidth, texHeight, texChannels;
         stbi_uc*     pixels    = stbi_load(model.texture_path.c_str(), &texWidth, &texHeight, &texChannels, STBI_rgb_alpha);
@@ -553,7 +546,7 @@ class VulkanApplication
         generateMipmaps(model.textureImage, VK_FORMAT_R8G8B8A8_UNORM, texWidth, texHeight, model.mipLevels);
     }
 
-    void createTextureImageView(Model& model)
+    void createTextureImageView(_Model& model)
     {
         model.textureImageView =
             createImageView(model.textureImage, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_ASPECT_COLOR_BIT, model.mipLevels);
@@ -615,11 +608,11 @@ class VulkanApplication
     void createTextureSampler(int rgIndex)
     {
         auto lowestMips = INT_MAX;
-        for (auto i = 0; i < renderGroups[rgIndex].models.size(); i++)
+        for (auto i = 0; i < renderGroups[rgIndex]._models.size(); i++)
         {
-            if (renderGroups[rgIndex].models[i].mipLevels < lowestMips)
+            if (renderGroups[rgIndex]._models[i].mipLevels < lowestMips)
             {
-                lowestMips = renderGroups[rgIndex].models[i].mipLevels;
+                lowestMips = renderGroups[rgIndex]._models[i].mipLevels;
             }
         }
 
@@ -661,7 +654,7 @@ class VulkanApplication
         samplerInfo.maxLod     = static_cast<float>(lowestMips);
         samplerInfo.mipLodBias = 0;  // Optional
 
-        auto result = vkCreateSampler(device, &samplerInfo, nullptr, &renderGroups[rgIndex].textureSampler);
+        auto result = vkCreateSampler(device, &samplerInfo, nullptr, &renderGroups[rgIndex]._textureSampler);
         throwOnError(result, "failed to create texture sampler!");
     }
 
@@ -858,56 +851,57 @@ class VulkanApplication
 
     void createDescriptorSets(int rgIndex)
     {
-        std::vector<VkDescriptorSetLayout> layouts(swapChainImages.size(), renderGroups[rgIndex].descriptorSetLayout);
+        std::vector<VkDescriptorSetLayout> layouts(swapChainImages.size(), renderGroups[rgIndex]._descriptorSetLayout);
         VkDescriptorSetAllocateInfo        allocInfo = {};
         allocInfo.sType                              = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
         allocInfo.descriptorPool                     = descriptorPool;
         allocInfo.descriptorSetCount                 = static_cast<uint32_t>(swapChainImages.size());
         allocInfo.pSetLayouts                        = layouts.data();
 
-        renderGroups[rgIndex].descriptorSets.resize(swapChainImages.size());
+        renderGroups[rgIndex]._descriptorSets.resize(swapChainImages.size());
 
-        auto result = vkAllocateDescriptorSets(device, &allocInfo, renderGroups[rgIndex].descriptorSets.data());
+        auto result = vkAllocateDescriptorSets(device, &allocInfo, renderGroups[rgIndex]._descriptorSets.data());
         throwOnError(result, "failed to allocate descriptor sets!");
 
         for (size_t i = 0; i < swapChainImages.size(); i++)
         {
-//            VkDescriptorBufferInfo bufferInfo = {};
-//            bufferInfo.buffer                 = uniformBuffers[i];
-//            bufferInfo.offset                 = 0;
-//            bufferInfo.range                  = sizeof(UniformBufferObject);  // VK_WHOLE_SIZE
+            //            VkDescriptorBufferInfo bufferInfo = {};
+            //            bufferInfo.buffer                 = uniformBuffers[i];
+            //            bufferInfo.offset                 = 0;
+            //            bufferInfo.range                  = sizeof(UniformBufferObject);  // VK_WHOLE_SIZE
 
             std::vector<VkDescriptorImageInfo> imageInfos;
-            imageInfos.resize(renderGroups[rgIndex].models.size());
-            for (auto i = 0; i < renderGroups[rgIndex].models.size(); i++)
+            imageInfos.resize(renderGroups[rgIndex]._models.size());
+            for (auto i = 0; i < renderGroups[rgIndex]._models.size(); i++)
             {
                 imageInfos[i]             = {};
                 imageInfos[i].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-                imageInfos[i].imageView   = renderGroups[rgIndex].models[i].textureImageView;
-                imageInfos[i].sampler     = renderGroups[rgIndex].textureSampler;
+                imageInfos[i].imageView   = renderGroups[rgIndex]._models[i].textureImageView;
+                imageInfos[i].sampler     = renderGroups[rgIndex]._textureSampler;
             }
 
             std::array<VkWriteDescriptorSet, 1> descriptorWrites = {};
 
-//            descriptorWrites[0].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-//            descriptorWrites[0].dstSet          = renderGroups[rgIndex].descriptorSets[i];
-//            descriptorWrites[0].dstBinding      = 0;
-//            descriptorWrites[0].dstArrayElement = 0;
-//            descriptorWrites[0].descriptorType  = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-//            descriptorWrites[0].descriptorCount = 1;
-//            descriptorWrites[0].pBufferInfo     = &bufferInfo;
+            //            descriptorWrites[0].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            //            descriptorWrites[0].dstSet          = renderGroups[rgIndex]._descriptorSets[i];
+            //            descriptorWrites[0].dstBinding      = 0;
+            //            descriptorWrites[0].dstArrayElement = 0;
+            //            descriptorWrites[0].descriptorType  = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+            //            descriptorWrites[0].descriptorCount = 1;
+            //            descriptorWrites[0].pBufferInfo     = &bufferInfo;
 
             descriptorWrites[0].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-            descriptorWrites[0].dstSet          = renderGroups[rgIndex].descriptorSets[i];
+            descriptorWrites[0].dstSet          = renderGroups[rgIndex]._descriptorSets[i];
             descriptorWrites[0].dstBinding      = 1;
             descriptorWrites[0].dstArrayElement = 0;
             descriptorWrites[0].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-            descriptorWrites[0].descriptorCount = (int)renderGroups[rgIndex].models.size();
+            descriptorWrites[0].descriptorCount = (int)renderGroups[rgIndex]._models.size();
             descriptorWrites[0].pImageInfo      = imageInfos.data();
 
             // descriptorWrite.pTexelBufferView = nullptr;  // Optional
 
-            vkUpdateDescriptorSets(device, static_cast<uint32_t>(descriptorWrites.size()), descriptorWrites.data(), 0, nullptr);
+            vkUpdateDescriptorSets(device, static_cast<uint32_t>(descriptorWrites.size()), descriptorWrites.data(), 0,
+                                   nullptr);
         }
     }
 
@@ -952,15 +946,16 @@ class VulkanApplication
     // {
     //     VkDeviceSize bufferSize = sizeof(UniformBufferObject);
 
-    //     renderGroups[rgIndex].instanceDataBuffer.resize(swapChainImages.size());
-    //     renderGroups[rgIndex].instanceDataBufferMemory.resize(swapChainImages.size());
+    //     renderGroups[rgIndex]._instanceDataBuffer.resize(swapChainImages.size());
+    //     renderGroups[rgIndex]._instanceDataBufferMemory.resize(swapChainImages.size());
 
     //     for (auto i = 0; i < swapChainImages.size(); i++)
     //     {
     ///*VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT*/
     //         createBuffer(bufferSize, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
     //                      VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-    //                      renderGroups[rgIndex].instanceDataBuffer[i], renderGroups[rgIndex].instanceDataBufferMemory[i]);
+    //                      renderGroups[rgIndex]._instanceDataBuffer[i],
+    //                      renderGroups[rgIndex]._instanceDataBufferMemory[i]);
     //     }
     // }
 
@@ -1007,7 +1002,7 @@ class VulkanApplication
         layoutInfo.bindingCount                                = static_cast<uint32_t>(bindings.size());
         layoutInfo.pBindings                                   = bindings.data();
 
-        auto result = vkCreateDescriptorSetLayout(device, &layoutInfo, nullptr, &renderGroups[rgIndex].descriptorSetLayout);
+        auto result = vkCreateDescriptorSetLayout(device, &layoutInfo, nullptr, &renderGroups[rgIndex]._descriptorSetLayout);
         throwOnError(result, "failed to create descriptor set layout!");
     }
 
@@ -1391,11 +1386,11 @@ class VulkanApplication
 
     void createCommandBuffers(int rgIndex)
     {
-        renderGroups[rgIndex].commandBuffers.resize(swapChainFramebuffers.size());
+        renderGroups[rgIndex]._commandBuffers.resize(swapChainFramebuffers.size());
 
         VkCommandBufferAllocateInfo allocInfo = {};
         allocInfo.sType                       = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
-        allocInfo.commandPool                 = *renderGroups[rgIndex].commandPool;
+        allocInfo.commandPool                 = *renderGroups[rgIndex]._commandPool;
 
         // The level parameter specifies if the allocated command buffers are primary or secondary command buffers.
         // VK_COMMAND_BUFFER_LEVEL_PRIMARY:   // Can be submitted to a queue for execution, but cannot be called from
@@ -1403,9 +1398,9 @@ class VulkanApplication
         // VK_COMMAND_BUFFER_LEVEL_SECONDARY: // Cannot be submitted directly, but can be called from primary command
         //									  // buffers.
         allocInfo.level              = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-        allocInfo.commandBufferCount = (uint32_t)renderGroups[rgIndex].commandBuffers.size();
+        allocInfo.commandBufferCount = (uint32_t)renderGroups[rgIndex]._commandBuffers.size();
 
-        auto result = vkAllocateCommandBuffers(device, &allocInfo, renderGroups[rgIndex].commandBuffers.data());
+        auto result = vkAllocateCommandBuffers(device, &allocInfo, renderGroups[rgIndex]._commandBuffers.data());
         throwOnError(result, "failed to allocate command buffers!");
 
         VkCommandBufferBeginInfo beginInfo = {};
@@ -1442,33 +1437,33 @@ class VulkanApplication
         renderPassInfo.clearValueCount = static_cast<uint32_t>(clearValues.size());
         renderPassInfo.pClearValues    = clearValues.data();
 
-        for (size_t i = 0; i < renderGroups[rgIndex].commandBuffers.size(); i++)
+        for (size_t i = 0; i < renderGroups[rgIndex]._commandBuffers.size(); i++)
         {
-            auto result = vkBeginCommandBuffer(renderGroups[rgIndex].commandBuffers[i], &beginInfo);
+            auto result = vkBeginCommandBuffer(renderGroups[rgIndex]._commandBuffers[i], &beginInfo);
             throwOnError(result, "failed to begin recording command buffer!");
 
             renderPassInfo.framebuffer = swapChainFramebuffers[i];
 
-            vkCmdBeginRenderPass(renderGroups[rgIndex].commandBuffers[i], &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
+            vkCmdBeginRenderPass(renderGroups[rgIndex]._commandBuffers[i], &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
 
-            vkCmdBindDescriptorSets(renderGroups[rgIndex].commandBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout,
-                                    0, 1, &renderGroups[rgIndex].descriptorSets[i], 0, nullptr);
+            vkCmdBindDescriptorSets(renderGroups[rgIndex]._commandBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                    pipelineLayout, 0, 1, &renderGroups[rgIndex]._descriptorSets[i], 0, nullptr);
 
-            vkCmdBindPipeline(renderGroups[rgIndex].commandBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS,
-                              renderGroups[i].graphicsPipeline);
+            vkCmdBindPipeline(renderGroups[rgIndex]._commandBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS,
+                              renderGroups[i]._graphicsPipeline);
 
-            VkBuffer     vertexBuffers[] = {renderGroups[rgIndex].vertexBuffer};
+            VkBuffer     vertexBuffers[] = {renderGroups[rgIndex]._vertexBuffer};
             VkDeviceSize offsets[]       = {0};
-            vkCmdBindVertexBuffers(renderGroups[rgIndex].commandBuffers[i], 0, 1, vertexBuffers, offsets);
+            vkCmdBindVertexBuffers(renderGroups[rgIndex]._commandBuffers[i], 0, 1, vertexBuffers, offsets);
 
             // you can only have a single index buffer. It's unfortunately not possible to use different indices for each
             // vertex attribute, so we do still have to completely duplicate vertex data even if just one attribute varies.
-            vkCmdBindIndexBuffer(renderGroups[rgIndex].commandBuffers[i], renderGroups[rgIndex].indexBuffer, 0,
+            vkCmdBindIndexBuffer(renderGroups[rgIndex]._commandBuffers[i], renderGroups[rgIndex]._indexBuffer, 0,
                                  VK_INDEX_TYPE_UINT32);
 
             // OLD call before we indexed vertices
             // vkCmdDraw(commandBuffers[i], static_cast<uint32_t>(vertices.size()), 1, 0, 0);
-            // vkCmdDrawIndexed(renderGroups[rgIndex].commandBuffers[i], static_cast<uint32_t>(indices.size()), 1, 0, 0, 0);
+            // vkCmdDrawIndexed(renderGroups[rgIndex]._commandBuffers[i], static_cast<uint32_t>(indices.size()), 1, 0, 0, 0);
 
             //
             //
@@ -1483,19 +1478,19 @@ class VulkanApplication
             int                                       currentIndicesOffset  = 0;
             int                                       currentVerticesOffset = 0;
             int                                       instances             = 0;
-            for (auto i = 0; i < renderGroups[rgIndex].models.size(); i++)
+            for (auto i = 0; i < renderGroups[rgIndex]._models.size(); i++)
             {
                 int a = 1;
 
                 drawCommandParameters.push_back({});
-                drawCommandParameters[i].indexCount    = (int)renderGroups[rgIndex].models[i].indicesCount;
+                drawCommandParameters[i].indexCount    = (int)renderGroups[rgIndex]._models[i].indicesCount;
                 drawCommandParameters[i].instanceCount = a;  // TODO: need to have some way to set this
                 drawCommandParameters[i].firstIndex    = currentIndicesOffset;
                 drawCommandParameters[i].vertexOffset  = currentVerticesOffset;
                 drawCommandParameters[i].firstInstance = i * instances;  // Pretty sure this is 0
 
-                currentIndicesOffset += renderGroups[rgIndex].models[i].indicesCount;
-                currentVerticesOffset += renderGroups[rgIndex].models[i].verticesCount;
+                currentIndicesOffset += renderGroups[rgIndex]._models[i].indicesCount;
+                currentVerticesOffset += renderGroups[rgIndex]._models[i].verticesCount;
                 instances += a;
             }
 
@@ -1537,7 +1532,7 @@ class VulkanApplication
             //
             //
 
-            vkCmdDrawIndexedIndirect(renderGroups[rgIndex].commandBuffers[i], drawCommandsBuffer, 0,
+            vkCmdDrawIndexedIndirect(renderGroups[rgIndex]._commandBuffers[i], drawCommandsBuffer, 0,
                                      (int)drawCommandParameters.size(), sizeof(VkDrawIndexedIndirectCommand));
 
             //
@@ -1549,9 +1544,9 @@ class VulkanApplication
             //
             //
 
-            vkCmdEndRenderPass(renderGroups[rgIndex].commandBuffers[i]);
+            vkCmdEndRenderPass(renderGroups[rgIndex]._commandBuffers[i]);
 
-            result = vkEndCommandBuffer(renderGroups[rgIndex].commandBuffers[i]);
+            result = vkEndCommandBuffer(renderGroups[rgIndex]._commandBuffers[i]);
             throwOnError(result, "failed to record command buffer!");
         }
     }
@@ -1757,17 +1752,15 @@ class VulkanApplication
 
         // TODO: @MaxCompleteAPI, hardcoding the Vertex data as the accepted for this pipeline, make this accept any object
         // and be dynamic (TEMPLATES?!?!?! WOOOOHOO)
-        auto bindingDescriptions = std::vector<VkVertexInputBindingDescription>{
-            Vertex::getBindingDescription(0),
-            InstanceData::getBindingDescription(1)
-        };
-        
+        auto bindingDescriptions = std::vector<VkVertexInputBindingDescription>{Vertex::getBindingDescription(0),
+                                                                                _InstanceData::getBindingDescription(1)};
+
         auto attributeDescriptions = std::vector<VkVertexInputAttributeDescription>();
-        //auto vertexBindingDescription    = Vertex::getBindingDescription(0);
+        // auto vertexBindingDescription    = Vertex::getBindingDescription(0);
         Vertex::getAttributeDescriptions(0, attributeDescriptions);
 
-        //auto instanceDataBindingDescription    = InstanceData::getBindingDescription(1);
-        InstanceData::getAttributeDescriptions(1, attributeDescriptions);
+        // auto instanceDataBindingDescription    = InstanceData::getBindingDescription(1);
+        _InstanceData::getAttributeDescriptions(1, attributeDescriptions);
 
         // Bindings: // spacing between data and whether the data is per-vertex or per-instance
         //           // https://en.wikipedia.org/wiki/Geometry_instancing
@@ -1946,11 +1939,11 @@ class VulkanApplication
         VkPipelineLayoutCreateInfo pipelineLayoutInfo = {};
         pipelineLayoutInfo.sType                      = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
         pipelineLayoutInfo.setLayoutCount             = 1;
-        pipelineLayoutInfo.pSetLayouts                = &renderGroups[rgIndex].descriptorSetLayout;
+        pipelineLayoutInfo.pSetLayouts                = &renderGroups[rgIndex]._descriptorSetLayout;
         pipelineLayoutInfo.pushConstantRangeCount     = 0;        // Optional
         pipelineLayoutInfo.pPushConstantRanges        = nullptr;  // Optional
 
-        auto result = vkCreatePipelineLayout(*renderGroups[rgIndex].device, &pipelineLayoutInfo, nullptr, &pipelineLayout);
+        auto result = vkCreatePipelineLayout(*renderGroups[rgIndex]._device, &pipelineLayoutInfo, nullptr, &pipelineLayout);
         throwOnError(result, "failed to create pipeline layout!");
 
         VkPipelineDepthStencilStateCreateInfo depthStencil = {};
@@ -2014,7 +2007,7 @@ class VulkanApplication
         // to a file. This makes it possible to significantly speed up pipeline creation at a later time. We'll get into
         // this in the pipeline cache chapter.
         result = vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr,
-                                           &renderGroups[rgIndex].graphicsPipeline);
+                                           &renderGroups[rgIndex]._graphicsPipeline);
         throwOnError(result, "failed to create graphics pipeline!");
 
         vkDestroyShaderModule(device, fragShaderModule, nullptr);
@@ -2266,17 +2259,21 @@ class VulkanApplication
 
         /*
         VK_PRESENT_MODE_IMMEDIATE_KHR: Images submitted by your application are transferred to the screen right away,
-        which may result in tearing. VK_PRESENT_MODE_FIFO_KHR: The swap chain is a queue where the display takes an image
+        which may result in tearing.
+
+        VK_PRESENT_MODE_FIFO_KHR: The swap chain is a queue where the display takes an image
         from the front of the queue when the display is refreshed and the program inserts rendered images at the back of
         the queue. If the queue is full then the program has to wait. This is most similar to vertical sync as found in
         modern games. The moment that the display is refreshed is known as "vertical blank".
+
         VK_PRESENT_MODE_FIFO_RELAXED_KHR: This mode only differs from the previous one if the application is late and the
         queue was empty at the last vertical blank. Instead of waiting for the next vertical blank, the image is
-        transferred right away when it finally arrives. This may result in visible tearing. VK_PRESENT_MODE_MAILBOX_KHR:
-        This is another variation of the second mode. Instead of blocking the application when the queue is full, the
-        images that are already queued are simply replaced with the newer ones. This mode can be used to implement triple
-        buffering, which allows you to avoid tearing with significantly less latency issues than standard vertical sync
-        that uses double buffering.
+        transferred right away when it finally arrives. This may result in visible tearing.
+
+        VK_PRESENT_MODE_MAILBOX_KHR: This is another variation of the second mode. Instead of blocking the application when
+        the queue is full, the images that are already queued are simply replaced with the newer ones. This mode can be used
+        to implement triple buffering, which allows you to avoid tearing with significantly less latency issues than standard
+        vertical sync that uses double buffering.
         */
     }
 
@@ -2664,7 +2661,7 @@ class VulkanApplication
         }
     }
 
-    void drawFrame(std::vector<int> renderGroupIndices)
+    void drawFrame()
     {
         // TODO: @MaxBestPractice, set the timeout
         vkWaitForFences(device, 1, &inFlightFences[currentFrame], VK_TRUE, UINT64_MAX);
@@ -2695,9 +2692,9 @@ class VulkanApplication
 
         // updateUniformBuffer(imageIndex);
 
-        for (auto i = 0; i < renderGroupIndices.size(); i++)
+        for (auto i = 0; i < culledIndex; i++)
         {
-            updateInstanceDataBuffer(renderGroupIndices[i], imageIndex);
+            updateInstanceDataBuffer(i, imageIndex);
         }
 
         VkSubmitInfo submitInfo = {};
@@ -2713,7 +2710,7 @@ class VulkanApplication
         std::vector<VkCommandBuffer> commandBuffers;
         for (auto i = 0; i < renderGroups.size(); i++)
         {
-            commandBuffers.push_back(renderGroups[i].commandBuffers[imageIndex]);
+            commandBuffers.push_back(renderGroups[i]._commandBuffers[imageIndex]);
         }
 
         submitInfo.commandBufferCount = (int)renderGroups.size();
@@ -2758,10 +2755,10 @@ class VulkanApplication
             throwOnError(result, "failed to present swap chain image!");
         }
 
-        for (auto i = 0; i < renderGroupIndices.size(); i++)
+        for (auto i = 0; i < culledIndex; i++)
         {
-            vkDestroyBuffer(device, renderGroups[i].indexBuffer, nullptr);
-            vkFreeMemory(device, renderGroups[i].indexBufferMemory, nullptr);
+            vkDestroyBuffer(device, renderGroups[i]._indexBuffer, nullptr);
+            vkFreeMemory(device, renderGroups[i]._indexBufferMemory, nullptr);
         }
 
         currentFrame = (currentFrame + 1) % MAX_FRAMES_IN_FLIGHT;
@@ -2797,51 +2794,51 @@ class VulkanApplication
 
     void updateInstanceDataBuffer(int rgIndex, uint32_t imageIndex)
     {
-        std::vector<InstanceData> instanceData;
-        instanceData.resize(renderGroups[rgIndex].totalInstanceCount);
+        std::vector<_InstanceData> instanceData;
+        instanceData.resize(renderGroups[rgIndex]._totalInstanceCount);
 
         // TODO make this and all of its instances througout a global const
         auto mat4None = glm::mat4(0.0f);
-        for (auto i = 0; i < renderGroups[rgIndex].models.size(); i++)
+        for (auto i = 0; i < renderGroups[rgIndex]._models.size(); i++)
         {
-            for (auto j = 0; j < renderGroups[rgIndex].models[i]._modelMatrices.size(); j++)
+            for (auto j = 0; j < renderGroups[rgIndex]._models[i]._modelMatrices.size(); j++)
             {
-                if (renderGroups[rgIndex].models[i]._modelMatrices[j] != mat4None)
+                if (renderGroups[rgIndex]._models[i]._modelMatrices[j] != mat4None)
                 {
                     auto k = instanceData.size();
                     instanceData.push_back({});
-                    instanceData[k].projViewModel = _proj * _view * renderGroups[rgIndex].models[i]._modelMatrices[j];
+                    instanceData[k].projViewModel = _proj * _view * renderGroups[rgIndex]._models[i]._modelMatrices[j];
                     instanceData[k].textureIndex  = i;
                 }
             }
         }
 
-        // renderGroups[rgIndex].instanceDataBufferSize[currentImage]
-        VkDeviceSize bufferSize = instanceData.size() * sizeof(InstanceData);
+        // renderGroups[rgIndex]._instanceDataBufferSize[currentImage]
+        VkDeviceSize bufferSize = instanceData.size() * sizeof(_InstanceData);
 
-        if (bufferSize != renderGroups[rgIndex].instanceDataBufferSize)
+        if (bufferSize != renderGroups[rgIndex]._instanceDataBufferSize)
         {
             createBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
                          VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-                         renderGroups[rgIndex].instanceDataStagingBuffer,
-                         renderGroups[rgIndex].instanceDataStagingBufferMemory);
+                         renderGroups[rgIndex]._instanceDataStagingBuffer,
+                         renderGroups[rgIndex]._instanceDataStagingBufferMemory);
         }
 
         void* data;
-        vkMapMemory(device, renderGroups[rgIndex].instanceDataStagingBufferMemory, 0, bufferSize, 0, &data);
+        vkMapMemory(device, renderGroups[rgIndex]._instanceDataStagingBufferMemory, 0, bufferSize, 0, &data);
         memcpy(data, instanceData.data(), (size_t)bufferSize);
-        vkUnmapMemory(device, renderGroups[rgIndex].instanceDataStagingBufferMemory);
+        vkUnmapMemory(device, renderGroups[rgIndex]._instanceDataStagingBufferMemory);
 
-        if (bufferSize != renderGroups[rgIndex].instanceDataBufferSize)
+        if (bufferSize != renderGroups[rgIndex]._instanceDataBufferSize)
         {
             createBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
-                         VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, renderGroups[rgIndex].instanceDataBuffer[imageIndex],
-                         renderGroups[rgIndex].instanceDataBufferMemory[imageIndex]);
+                         VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, renderGroups[rgIndex]._instanceDataBuffer[imageIndex],
+                         renderGroups[rgIndex]._instanceDataBufferMemory[imageIndex]);
 
-            renderGroups[rgIndex].instanceDataBufferSize = bufferSize;
+            renderGroups[rgIndex]._instanceDataBufferSize = bufferSize;
         }
 
-        buffercpy(renderGroups[rgIndex].instanceDataStagingBuffer, renderGroups[rgIndex].instanceDataBuffer[imageIndex],
+        buffercpy(renderGroups[rgIndex]._instanceDataStagingBuffer, renderGroups[rgIndex]._instanceDataBuffer[imageIndex],
                   bufferSize);
 
         // vkDestroyBuffer(device, stagingBuffer, nullptr);
@@ -2852,8 +2849,8 @@ class VulkanApplication
     {
         createGraphicsPipeline(rgIndex);
         createDescriptorSets(rgIndex);
-        vkFreeCommandBuffers(device, commandPool, static_cast<uint32_t>(renderGroups[rgIndex].commandBuffers.size()),
-                             renderGroups[rgIndex].commandBuffers.data());
+        vkFreeCommandBuffers(device, commandPool, static_cast<uint32_t>(renderGroups[rgIndex]._commandBuffers.size()),
+                             renderGroups[rgIndex]._commandBuffers.data());
         createCommandBuffers(rgIndex);
     }
 
@@ -2874,11 +2871,11 @@ class VulkanApplication
 
         for (auto i = 0; i < renderGroups.size(); i++)
         {
-            vkFreeCommandBuffers(*renderGroups[i].device, *renderGroups[i].commandPool,
-                                 static_cast<uint32_t>(renderGroups[i].commandBuffers.size()),
-                                 renderGroups[i].commandBuffers.data());
+            vkFreeCommandBuffers(*renderGroups[i]._device, *renderGroups[i]._commandPool,
+                                 static_cast<uint32_t>(renderGroups[i]._commandBuffers.size()),
+                                 renderGroups[i]._commandBuffers.data());
 
-            vkDestroyPipeline(*renderGroups[i].device, renderGroups[i].graphicsPipeline, nullptr);
+            vkDestroyPipeline(*renderGroups[i]._device, renderGroups[i]._graphicsPipeline, nullptr);
         }
 
         vkDestroyPipelineLayout(device, pipelineLayout, nullptr);
@@ -2895,8 +2892,8 @@ class VulkanApplication
         {
             for (auto j = 0; j < swapChainImages.size(); j++)
             {
-                vkDestroyBuffer(device, renderGroups[i].instanceDataBuffer[j], nullptr);
-                vkFreeMemory(device, renderGroups[i].instanceDataBufferMemory[j], nullptr);
+                vkDestroyBuffer(device, renderGroups[i]._instanceDataBuffer[j], nullptr);
+                vkFreeMemory(device, renderGroups[i]._instanceDataBufferMemory[j], nullptr);
             }
         }
 
@@ -2917,17 +2914,18 @@ class VulkanApplication
         // this time
         for (auto i = 0; i < renderGroups.size(); i++)
         {
-            vkDestroySampler(*renderGroups[i].device, renderGroups[i].textureSampler, nullptr);
+            vkDestroySampler(*renderGroups[i]._device, renderGroups[i]._textureSampler, nullptr);
 
-            for (auto i = 0; i < renderGroups[i].models.size(); i++)
+            for (auto i = 0; i < renderGroups[i]._models.size(); i++)
             {
-                renderGroups[i].models[i].~Model();
+                renderGroups[i]._models[i].~_Model();
             }
         }
 
         for (auto i = 0; i < renderGroups.size(); i++)
         {
-            vkDestroyDescriptorSetLayout(*renderGroups[i].device, renderGroups[i].descriptorSetLayout, nullptr);
+            vkDestroyDescriptorSetLayout(*renderGroups[i]._device, renderGroups[i]._descriptorSetLayout, nullptr);
+            renderGroups[i].~_RenderGroup();
         }
 
         for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++)
@@ -2984,7 +2982,7 @@ class VulkanApplication
     {
         if (value)
         {
-            glfwSetWindowMonitor(window, glfwGetPrimaryMonitor(), NULL, NULL, window_width, window_height, GLFW_DONT_CARE);
+            glfwSetWindowMonitor(window, glfwGetPrimaryMonitor(), 0, 0, window_width, window_height, GLFW_DONT_CARE);
         }
         else
         {
@@ -3001,28 +2999,48 @@ class VulkanApplication
 
     int createRenderGroup()
     {
-        int index = (int)renderGroups.size();
-        renderGroups.push_back(RenderGroup());
-        renderGroups[index].device      = &device;
-        renderGroups[index].commandPool = &commandPool;
-        renderGroups[index].commandBuffers.resize(MAX_FRAMES_IN_FLIGHT);
-        renderGroups[index].instanceDataBuffer.resize(MAX_FRAMES_IN_FLIGHT);
-        renderGroups[index].instanceDataBufferMemory.resize(MAX_FRAMES_IN_FLIGHT);
-        return index;
+        renderGroups.push_back(_RenderGroup(&device, &commandPool, MAX_FRAMES_IN_FLIGHT));
+        return (int)renderGroups.size() - 1;
     }
 
-    void setMatrices(glm::mat4 view, glm::mat4 proj)
+    // TODO: @MaxValidation not sure if this needs anymore validation
+    void cullRenderGroup(int rgIndex)
     {
-        _view = view;
-        _proj = proj;
+        // unload?
+        if (rgIndex > culledIndex) return;
+
+        culledIndex--;
+        std::swap(renderGroups[rgIndex], renderGroups[culledIndex]);
+    }
+
+    void uncullRenderGroup(int rgIndex)
+    {
+        // unload?
+        if (rgIndex < culledIndex) return;
+
+        culledIndex++;
+        std::swap(renderGroups[rgIndex], renderGroups[culledIndex]);
+    }
+
+    void setViewMatrix(glm::mat4 view) { _view = view; }
+
+    // TODO: @Max, validation (only in debug)
+    // TODO: @Max, probably need to reupload or remake the commandQueues
+    void setFov(float fov)
+    {
+        _proj = glm::perspective(glm::radians(fov), (float)window_width / (float)window_height, 0.1f, 10.0f);
+        // GLM was originally designed for OpenGL, where the Y coordinate of the clip coordinates is inverted. The easiest
+        // way to compensate for that is to flip the sign on the scaling factor of the Y axis in the projection matrix. If
+        // you don't do this, then the image will be rendered upside down.
+        _proj[1][1] *= -1;
     }
 
     int addModel(int rgIndex, std::string mesh_path, std::string texture_path)
     {
         // TODO: @MaxCompleteAPI, add debug only or optional checks for index within bounds of vector
-        auto index = renderGroups[rgIndex].models.size();
-        renderGroups[rgIndex].models.push_back(Model());
-        auto model = &renderGroups[rgIndex].models[index];
+        auto index = renderGroups[rgIndex]._models.size();
+        renderGroups[rgIndex]._models.push_back(_Model());
+        auto model = &renderGroups[rgIndex]._models[index];
 
         model->device       = &device;
         model->mesh_path    = mesh_path;
@@ -3042,19 +3060,19 @@ class VulkanApplication
     int addInstance(int rgIndex, int modelIndex, const glm::mat4& modelMatrix)
     {
         auto mat4None = glm::mat4(0.0f);
-        for (auto i = 0; i < renderGroups[rgIndex].models[modelIndex]._modelMatrices.size(); i++)
+        for (auto i = 0; i < renderGroups[rgIndex]._models[modelIndex]._modelMatrices.size(); i++)
         {
-            if (renderGroups[rgIndex].models[modelIndex]._modelMatrices[i] == mat4None)
+            if (renderGroups[rgIndex]._models[modelIndex]._modelMatrices[i] == mat4None)
             {
-                renderGroups[rgIndex].models[modelIndex]._modelMatrices[i] = modelMatrix;
-                renderGroups[rgIndex].totalInstanceCount++;
+                renderGroups[rgIndex]._models[modelIndex]._modelMatrices[i] = modelMatrix;
+                renderGroups[rgIndex]._totalInstanceCount++;
                 return i;
             }
         }
 
-        auto index = renderGroups[rgIndex].models[modelIndex]._modelMatrices.size();
-        renderGroups[rgIndex].models[modelIndex]._modelMatrices.push_back(modelMatrix);
-        renderGroups[rgIndex].totalInstanceCount++;
+        auto index = renderGroups[rgIndex]._models[modelIndex]._modelMatrices.size();
+        renderGroups[rgIndex]._models[modelIndex]._modelMatrices.push_back(modelMatrix);
+        renderGroups[rgIndex]._totalInstanceCount++;
         return (int)index;
     }
 
@@ -3063,18 +3081,18 @@ class VulkanApplication
         auto             mat4None     = glm::mat4(0.0f);
         auto             currentIndex = 0;
         std::vector<int> indices;
-        for (auto i = 0; i < renderGroups[rgIndex].models[modelIndex]._modelMatrices.size(); i++)
+        for (auto i = 0; i < renderGroups[rgIndex]._models[modelIndex]._modelMatrices.size(); i++)
         {
-            if (renderGroups[rgIndex].models[modelIndex]._modelMatrices[i] == mat4None)
+            if (renderGroups[rgIndex]._models[modelIndex]._modelMatrices[i] == mat4None)
             {
-                renderGroups[rgIndex].models[modelIndex]._modelMatrices[i] = modelMatrices[currentIndex];
-                // renderGroups[rgIndex].totalInstanceCount++;
+                renderGroups[rgIndex]._models[modelIndex]._modelMatrices[i] = modelMatrices[currentIndex];
+                // renderGroups[rgIndex]._totalInstanceCount++;
                 indices.push_back(i);
             }
         }
 
-        renderGroups[rgIndex].models[modelIndex]._modelMatrices.insert(
-            renderGroups[rgIndex].models[modelIndex]._modelMatrices.end(), modelMatrices.begin() + currentIndex,
+        renderGroups[rgIndex]._models[modelIndex]._modelMatrices.insert(
+            renderGroups[rgIndex]._models[modelIndex]._modelMatrices.end(), modelMatrices.begin() + currentIndex,
             modelMatrices.end());
 
         for (auto i = currentIndex; i < modelMatrices.size() - currentIndex; i++)
@@ -3082,27 +3100,51 @@ class VulkanApplication
             indices.push_back(i);
         }
 
-        // renderGroups[rgIndex].totalInstanceCount += modelMatrices.size() - currentIndex;
-        renderGroups[rgIndex].totalInstanceCount += modelMatrices.size();
+        // renderGroups[rgIndex]._totalInstanceCount += modelMatrices.size() - currentIndex;
+        renderGroups[rgIndex]._totalInstanceCount += modelMatrices.size();
         return indices;
     }
 
     void removeInstance(int rgIndex, int modelIndex, int instanceIndex)
     {
-        renderGroups[rgIndex].models[modelIndex]._modelMatrices[instanceIndex] = glm::mat4(0.0f);
-        renderGroups[rgIndex].totalInstanceCount--;
+        renderGroups[rgIndex]._models[modelIndex]._modelMatrices[instanceIndex] = glm::mat4(0.0f);
+        renderGroups[rgIndex]._totalInstanceCount--;
     }
 
     void updateInstanceModelMatrix(int rgIndex, int modelIndex, int instanceIndex, glm::mat4 model)
     {
-        renderGroups[rgIndex].models[modelIndex]._modelMatrices[instanceIndex] = model;
+        renderGroups[rgIndex]._models[modelIndex]._modelMatrices[instanceIndex] = model;
     }
 
-    void renderFrame(std::vector<int> renderGroupIndices) { drawFrame(renderGroupIndices); }
+    glm::mat4* getModelMatrix(int rgIndex, int modelIndex, int instanceIndex)
+    {
+        return &renderGroups[rgIndex]._models[modelIndex]._modelMatrices[instanceIndex];
+    }
+
+    void renderFrame() { drawFrame(); }
 
     void waitIdle() { vkDeviceWaitIdle(device); }
 
     void cleanupApp() { cleanup(); }
+
+    void run(void (*update)(float))
+    {
+        auto  oldTime = glfwGetTime();
+        float dt      = oldTime;
+        while (!glfwWindowShouldClose(window))
+        {
+            auto current = glfwGetTime();
+            dt           = current - oldTime;
+            oldTime      = current;
+
+            (*update)(dt);
+
+            drawFrame();
+        }
+
+        vkDeviceWaitIdle(device);
+        cleanup();
+    }
 };
 
 // The input assembler collects the raw vertex data from the buffers you specify and may also use an index buffer to
@@ -3251,16 +3293,16 @@ class VulkanApplication
 //
 // Well, I actually starting to think something is wrong in glm::lookAt.
 // I was digging a bit deeper according to the whole LH/RH issue. As it turns out glm has a #define for this GLM_LEFT_HANDED
-// or GLM_RIGHT_HANDED and it will use the matching functions lookAtRH/LH and perspectiveRH/LH … but they changed this to be
+// or GLM_RIGHT_HANDED and it will use the matching functions lookAtRH/LH and perspectiveRH/LH ï¿½ but they changed this to be
 // default on GLM_LEFT_HANDED (I guess because of Vulkan). I always forget which one is used by Direct3D and which by OpenGL,
-// so I was searching … most sources note that: LH is Direct3d/Vulkan and RH is OpenGL. But, wait ... that means it simply
+// so I was searching ï¿½ most sources note that: LH is Direct3d/Vulkan and RH is OpenGL. But, wait ... that means it simply
 // should have worked (without the CCW rendering and without inverting anything by hand), right?
 //
-// Something was bugging me too (if you do not correct anything) you get an awkward coordinate system with Y-Axis down … that
+// Something was bugging me too (if you do not correct anything) you get an awkward coordinate system with Y-Axis down ï¿½ that
 // is even RH ... what the hell?
 //
 // I think it should be: X-Axis:Left, Y-Axis:Up, Z-Axis: Into which is LH. With lookAt Up vector set to vec3(0.0f, 1.0f,
-// 0.0f). (Well with Unreal I’m actually used to a Z-Up System … but that is Unreal.)
+// 0.0f). (Well with Unreal Iï¿½m actually used to a Z-Up System ï¿½ but that is Unreal.)
 //
 // After a bit trial and error I was looking into the implementation of glm::lookAtLH and figured out that if you swap the
 // second cross product in: tvec3<t, p=""> const u(cross(f, s)); to u(cross(s, f)); everything works exactly like in a Y-Up
@@ -3365,7 +3407,12 @@ class VulkanApplication
 //
 // *************************************************************************************************************************
 //
-//
-
 // TODO: @MaxVulkanTip, CommandPools are more or less allocators for commandBuffers in GPU memory, these allocators have no
 // synchronization (like malloc does) and therefore having one per frame is not a bad idea
+//
+// *************************************************************************************************************************
+//
+// TODO: @Max, create a #define LOGGING_IN_RELEASE
+//
+// *************************************************************************************************************************
+//

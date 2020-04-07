@@ -3,31 +3,39 @@
 #endif
 
 #include <iostream>
+#include <memory>
 #include <sstream>
+#include <string>
+#include <vector>
 
+#include "Interfaces.h"
 #include "Logger.h"
 #include "VulkanApplication.h"
 
-// Lorian or Spock
+void update(float dt);
+
+extern RenderGroup renderGroup;
+extern Instance    instance;
+extern Model       model;
 
 std::ofstream graphicsLogFile;
-void initGraphicsLog(){
+void          initGraphicsLog()
+{
     std::string fileName;
-    
     {
         // auto t  = std::time(nullptr);
         // auto tm = *std::localtime(&t);
-        
+
         // std::stringstream filenameStream;
         // filenameStream << "graphics" << std::put_time(&tm, "%d-%m-%Y");
-        
+
         fileName = "graphics";
         // filenameStream.str();
     }
-    
+
     int         logNumber = 0;
     std::string file      = "graphics" + fileName + std::to_string(logNumber) + ".log";
-    
+
 #ifdef _WIN32
     // TODO: @MaxWindowsSpecific, find a way to make the directory if it does not alreay exist (probably add an ini
     // option for the path) also add a date-timestamp to this
@@ -41,7 +49,7 @@ void initGraphicsLog(){
     // also add a date-timestamp to this
     file = "/Users/maxrink/Development/Vulkan Project/VulkanTest/Graphics/" + fileName + std::to_string(logNumber) + ".log";
 #endif
-    
+
     graphicsLogFile.open("Graphics/" + file);
     // TODO: @MaxTemporary, this should be a new file
     graphicsLogFile.clear();
@@ -50,56 +58,47 @@ void initGraphicsLog(){
 int main()
 {
     initGraphicsLog();
-    Logger graphicsLog(&graphicsLogFile);
-    VulkanApplication app(graphicsLog, 1920, 1080, "Vulkan Fun!", false);
-    
-    std::vector<int> renderGroupIndices;
-    renderGroupIndices.push_back(app.createRenderGroup());
-    auto modelIndex = app.addModel(renderGroupIndices[0], "models/chalet.obj", "textures/chalet.jpg");
-    auto instanceIndex = app.addInstance(renderGroupIndices[0], modelIndex, glm::mat4(1.0f));
-    
-    auto model = glm::mat4(1.0f);
-    
-    auto view = glm::lookAt(glm::vec3(2.0f, 2.0f, 2.0f), glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 0.0f, 1.0f));
-    
-    // TODO: @MaxCompleteAPI, probably have this auto set from VulkanApplication.h and choose/set FOV
-    auto proj = glm::perspective(glm::radians(45.0f), 1920.0f / 1080.0f, 0.1f, 10.0f);
-    
-    // GLM was originally designed for OpenGL, where the Y coordinate of the clip coordinates is inverted. The easiest
-    // way to compensate for that is to flip the sign on the scaling factor of the Y axis in the projection matrix. If
-    // you don't do this, then the image will be rendered upside down.
-    proj[1][1] *= -1;
+    auto graphicsLog = Logger(&graphicsLogFile);
 
-    app.setMatrices(view, proj);
-    
-    
-    auto oldTime = glfwGetTime();
-    float dt = oldTime;
+    // TODO: @Max, make this a singleton?
+    // TODO: @Max, remove all window stuff from here and have this just be vulkan/rendering
+    auto app = VulkanApplication(graphicsLog, 1920, 1080, "Vulkan Fun!", false);
+
+    renderGroup = RenderGroup(&app);
+    model       = renderGroup.addNewModel("models/chalet.obj", "textures/chalet.jpg");
+    instance    = model.addInstance();
+
+    // create a camera class to handle this
+    auto view = glm::lookAt(glm::vec3(2.0f, 2.0f, 2.0f), glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 0.0f, 1.0f));
+
+    app.setViewMatrix(view);
+    app.setFov(45.0f);
+
     try
     {
-        while (!glfwWindowShouldClose(app.window))
         {
-            auto current = glfwGetTime();
-            dt = current - oldTime;
-            oldTime = current;
-            
-            //processInput();
-            //Update(dt); {
-            
-            model = glm::rotate(model, dt * glm::radians(90.0f), glm::vec3(0.0f, 0.0f, 1.0f));
-            // this is not ideal, probably pass back a pointer/reference to the model matrix in the vector itself to allow the user to modify it
-            app.updateInstanceModelMatrix(renderGroupIndices[0], modelIndex, instanceIndex, model);
-            
-            // } // Update
-            
-            app.renderFrame(renderGroupIndices);
-            
-            glfwPollEvents();
+            // auto  oldTime = glfwGetTime();
+            // float dt      = oldTime;
+            // while (!glfwWindowShouldClose(app.window))
+            // {
+            //     auto current = glfwGetTime();
+            //     dt           = current - oldTime;
+            //     oldTime      = current;
+
+            //     // processInput();
+
+            //     update(dt);
+
+            //     app.renderFrame();
+
+            //     glfwPollEvents();
+            // }
+
+            // app.waitIdle();
+            // app.cleanupApp();
         }
-        
-        app.waitIdle();
-        app.cleanupApp();
-        //app.run();
+
+        app.run(update);
     }
     catch (const std::exception& e)
     {
@@ -108,4 +107,14 @@ int main()
     }
 
     return EXIT_SUCCESS;
+}
+
+void update(float dt)
+{
+    // Not sure if it matters where this goes
+    glfwPollEvents();
+    // processInput();
+
+    auto modelMarix = instance.ModelMatrix();
+    *modelMarix     = glm::rotate(*modelMarix, dt * glm::radians(90.0f), glm::vec3(0.0f, 0.0f, 1.0f));
 }

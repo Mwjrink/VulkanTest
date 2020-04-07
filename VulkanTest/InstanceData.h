@@ -10,13 +10,12 @@
 #include <glm/gtx/hash.hpp>
 
 #include <array>
-
-struct InstanceData
+struct _InstanceData
 {
     glm::mat4 projViewModel;
     uint32_t textureIndex;
 
-	bool operator==(const InstanceData& other) const
+	bool operator==(const _InstanceData& other) const
     {
         return projViewModel == other.projViewModel && textureIndex == other.textureIndex;
     }
@@ -25,7 +24,7 @@ struct InstanceData
     {
         VkVertexInputBindingDescription bindingDescription = {};
         bindingDescription.binding                         = binding;
-        bindingDescription.stride                          = sizeof(InstanceData);
+        bindingDescription.stride                          = sizeof(_InstanceData);
         bindingDescription.inputRate                       = VK_VERTEX_INPUT_RATE_INSTANCE;
 
         // inputRate parameter can have one of the following values:
@@ -42,7 +41,7 @@ struct InstanceData
         attributeDescriptions[index].binding  = binding;
         attributeDescriptions[index].location = index;
         attributeDescriptions[index].format   = VK_FORMAT_R32G32B32A32_SFLOAT;
-        attributeDescriptions[index].offset   = offsetof(InstanceData, projViewModel);
+        attributeDescriptions[index].offset   = offsetof(_InstanceData, projViewModel);
 
         // The format parameter describes the type of data for the attribute. A bit confusingly, the formats are specified
         // using the same enumeration as color formats. The following shader types and formats are commonly used together:
@@ -59,6 +58,6 @@ struct InstanceData
         attributeDescriptions[index].binding  = binding;
         attributeDescriptions[index].location = index;
         attributeDescriptions[index].format   = VK_FORMAT_R8_UINT;
-        attributeDescriptions[index].offset   = offsetof(InstanceData, textureIndex);
+        attributeDescriptions[index].offset   = offsetof(_InstanceData, textureIndex);
     }
 };
