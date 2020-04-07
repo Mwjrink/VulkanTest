@@ -18,6 +18,9 @@ class _Model
 
     uint32_t mipLevels;
 
+	int      texWidth, texHeight;
+    stbi_uc* pixels;
+
     VkDevice* device;
 
     // Move these to RenderGroup ...
@@ -25,12 +28,6 @@ class _Model
     // VkDeviceMemory vertexBufferMemory;
     // VkBuffer       indexBuffer;
     // VkDeviceMemory indexBufferMemory;
-
-    // how the fuck is this handled?
-    VkImage        textureImage;
-    VkDeviceMemory textureImageMemory;
-    VkImageView    textureImageView;
-    // ...
 
     // TODO: @MaxCompleteAPI, this likely shouldn't be here and if it needs to be it should be dumped after loading
     // put this as a temp variable in loading then dump it once uploaded?

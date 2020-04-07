@@ -658,13 +658,13 @@ class VulkanApplication
         throwOnError(result, "failed to create texture sampler!");
     }
 
-    VkImageView createImageView(VkImage image, VkFormat format, VkImageAspectFlags aspectFlags, uint32_t mipLevels)
+    VkImageView createImageView(int rgIndex, VkFormat format, VkImageAspectFlags aspectFlags, uint32_t mipLevels)
     {
         VkImageViewCreateInfo viewInfo = {};
         viewInfo.sType                 = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
-        viewInfo.image                 = image;
-        viewInfo.viewType              = VK_IMAGE_VIEW_TYPE_2D;  // The viewType parameter allows you to treat images as 1D
-                                                                 // textures, 2D textures, 3D textures and cube maps.
+        viewInfo.image                 = renderGroups[rgIndex].textureImage;
+        viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D_ARRAY;  // The viewType parameter allows you to treat images as 1D
+                                                          // textures, 2D textures, 3D textures and cube maps.
         viewInfo.format = format;
 
         // The subresourceRange field describes what the image's purpose is and which part of the image should be
@@ -673,7 +673,7 @@ class VulkanApplication
         viewInfo.subresourceRange.baseMipLevel   = 0;
         viewInfo.subresourceRange.levelCount     = mipLevels;
         viewInfo.subresourceRange.baseArrayLayer = 0;
-        viewInfo.subresourceRange.layerCount     = 1;
+        viewInfo.subresourceRange.layerCount     = static_cast<int>(renderGroups[rgIndex].models.size());
 
         // The components field allows you to swizzle the color channels around. For example, you can map all of the
         // channels to the red channel for a monochrome texture. You can also map constant values of 0 and 1 to a
@@ -687,12 +687,8 @@ class VulkanApplication
         // layers. You could then create multiple image views for each image representing the views for the left and
         // right eyes by accessing different layers.
 
-        VkImageView imageView;
-
-        auto result = vkCreateImageView(device, &viewInfo, nullptr, &imageView);
+        auto result = vkCreateImageView(device, &viewInfo, nullptr, &renderGroups[rgIndex].textureImageView);
         throwOnError(result, "failed to create image view!");
-
-        return imageView;
     }
 
     void generateMipmaps(VkImage image, VkFormat imageFormat, int32_t texWidth, int32_t texHeight, uint32_t mipLevels)
@@ -783,8 +779,7 @@ class VulkanApplication
     }
 
     void createImage(uint32_t width, uint32_t height, uint32_t mipLevels, VkSampleCountFlagBits numSamples, VkFormat format,
-                     VkImageTiling tiling, VkImageUsageFlags usage, VkMemoryPropertyFlags properties, VkImage& image,
-                     VkDeviceMemory& imageMemory)
+                     VkImageTiling tiling, VkImageUsageFlags usage, VkMemoryPropertyFlags properties, int rgIndex) //, VkImage& image, VkDeviceMemory& imageMemory)
     {
         VkImageCreateInfo imageInfo = {};
         imageInfo.sType             = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
@@ -793,7 +788,7 @@ class VulkanApplication
         imageInfo.extent.height     = height;
         imageInfo.extent.depth      = 1;
         imageInfo.mipLevels         = mipLevels;
-        imageInfo.arrayLayers       = 1;
+        imageInfo.arrayLayers       = static_cast<int>(renderGroups[rgIndex].models.size());
         imageInfo.format            = format;
         imageInfo.tiling            = tiling;
         imageInfo.initialLayout     = VK_IMAGE_LAYOUT_UNDEFINED;
@@ -832,21 +827,21 @@ class VulkanApplication
         // We won't be using it in this tutorial, so leave it to its default value of 0.
         imageInfo.flags = 0;  // Optional
 
-        auto result = vkCreateImage(device, &imageInfo, nullptr, &image);
+        auto result = vkCreateImage(device, &imageInfo, nullptr, &renderGroups[rgIndex].textureImage);
         throwOnError(result, "failed to create image!");
 
         VkMemoryRequirements memRequirements;
-        vkGetImageMemoryRequirements(device, image, &memRequirements);
+        vkGetImageMemoryRequirements(device, renderGroups[rgIndex].textureImage, &memRequirements);
 
         VkMemoryAllocateInfo allocInfo = {};
         allocInfo.sType                = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
         allocInfo.allocationSize       = memRequirements.size;
         allocInfo.memoryTypeIndex      = findMemoryType(memRequirements.memoryTypeBits, properties);
 
-        result = vkAllocateMemory(device, &allocInfo, nullptr, &imageMemory);
+        result = vkAllocateMemory(device, &allocInfo, nullptr, &renderGroups[rgIndex].textureImageMemory);
         throwOnError(result, "failed to allocate image memory!");
 
-        vkBindImageMemory(device, image, imageMemory, 0);
+        vkBindImageMemory(device, renderGroups[rgIndex].textureImage, renderGroups[rgIndex].textureImageMemory, 0);
     }
 
     void createDescriptorSets(int rgIndex)
@@ -991,7 +986,7 @@ class VulkanApplication
 
         VkDescriptorSetLayoutBinding samplerLayoutBinding = {};
         samplerLayoutBinding.binding                      = 1;
-        samplerLayoutBinding.descriptorCount              = 1;
+        samplerLayoutBinding.descriptorCount              = static_cast<int>(renderGroups[rgIndex].models.size());
         samplerLayoutBinding.descriptorType               = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
         samplerLayoutBinding.pImmutableSamplers           = nullptr;
         samplerLayoutBinding.stageFlags                   = VK_SHADER_STAGE_FRAGMENT_BIT;
